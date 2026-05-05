@@ -521,6 +521,29 @@ async def forecast_schedules(conid: str):
     return await ibkr_get("/v1/api/forecast/contract/schedules", params={"conid": conid})
 
 
+@app.get("/api/forecast/full")
+async def forecast_full(conid: str, product_conid: str | None = None):
+    """One-stop call for the drawer: details + rules + schedules + secdef, with
+    each piece resilient to per-endpoint failures so partial data still renders."""
+    out: dict[str, Any] = {"conid": conid, "product_conid": product_conid}
+    async def safe(name: str, path: str, params: dict):
+        try:
+            out[name] = await ibkr_get(path, params=params)
+        except HTTPException as e:
+            out[name] = {"_error": f"{e.status_code}: {e.detail}"}
+        except Exception as e:
+            out[name] = {"_error": str(e)}
+    # Try the obvious shapes; whichever return useful data, the frontend will use.
+    await safe("details_by_conid",   "/v1/api/forecast/contract/details", {"conids": conid})
+    if product_conid:
+        await safe("details_by_prod","/v1/api/forecast/contract/details", {"conids": product_conid})
+        await safe("market_by_prod", "/v1/api/forecast/contract/market",  {"conid": product_conid})
+    await safe("rules",     "/v1/api/forecast/contract/rules",     {"conid": conid})
+    await safe("schedules", "/v1/api/forecast/contract/schedules", {"conid": conid})
+    await safe("secdef",    "/v1/api/iserver/secdef/info",         {"conid": conid})
+    return out
+
+
 # ─── market data ───
 @app.get("/api/marketdata/snapshot")
 async def md_snapshot(conids: str, fields: str = "31,84,86,88,85"):
@@ -595,6 +618,253 @@ async def passthrough(path: str, request: Request):
         return JSONResponse(r.json(), status_code=r.status_code)
     except Exception:
         return JSONResponse({"raw": r.text}, status_code=r.status_code)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# WebSocket proxy: bridge browser ↔ IBKR's wss://api.ibkr.com/v1/api/ws.
+# IBKR's WS path requires the bearer token in the URL and the session token
+# as the first message. We don't expose those to the browser — the proxy
+# holds them and forwards subscriptions / quote updates.
+# ────────────────────────────────────────────────────────────────────────────
+import websockets  # noqa: E402  (after FastAPI imports for clarity)
+from fastapi import WebSocket, WebSocketDisconnect  # noqa: E402
+
+
+@app.websocket("/api/ws")
+async def ws_proxy(client: WebSocket):
+    await client.accept()
+    if not SESS.is_authed():
+        await client.send_json({"type": "error", "error": "not_authed"})
+        await client.close()
+        return
+
+    upstream_url = f"wss://api.ibkr.com/v1/api/ws?bearer_token={SESS.bearer_token}"
+    try:
+        async with websockets.connect(upstream_url, ping_interval=30, max_size=2**22) as up:
+            # IBKR requires the session token as the first message, JSON-encoded.
+            await up.send(json.dumps({"session": SESS.session_token}))
+
+            async def from_browser():
+                """Forward subscribe/unsubscribe commands from browser to IBKR."""
+                try:
+                    while True:
+                        msg = await client.receive_text()
+                        await up.send(msg)
+                except WebSocketDisconnect:
+                    return
+
+            async def from_ibkr():
+                """Forward quote updates / topic messages back to browser."""
+                async for raw in up:
+                    text = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
+                    try:
+                        await client.send_text(text)
+                    except Exception:
+                        return
+
+            await asyncio.gather(from_browser(), from_ibkr())
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await client.send_json({"type": "error", "error": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Backtest engine.
+# Event-driven: pulls real /iserver/marketdata/history bars for each conid in
+# the universe, walks them oldest → newest, evaluates a strategy at each bar,
+# and simulates fills with conservative cost assumptions. No fabricated prices.
+# Returns a real equity curve, trade log, and post-cost metrics.
+#
+# The 7 PRD strategies are templates — each one is a callable that takes
+# (bar, position, params) and returns ('BUY' | 'SELL' | None, qty, reason).
+# We ship FairValueEdge as a fully-implemented baseline; the others have
+# placeholder signal functions that disable themselves until configured.
+# ────────────────────────────────────────────────────────────────────────────
+from dataclasses import asdict  # noqa: E402
+import math as _math  # noqa: E402
+
+
+def _conservative_fill(side: str, bar: dict, qty: int, slippage_cents: float = 0.5) -> tuple[float, float]:
+    """Buys lift the ask, sells hit the bid; we only have OHLCV here, so use
+    close ± half-tick to approximate. Returns (fill_price, fees)."""
+    px = float(bar.get("c") or bar.get("close") or 0.0)
+    slip = slippage_cents / 100.0
+    if side == "BUY":
+        px = px + slip
+    else:
+        px = px - slip
+    px = max(0.01, min(0.99, px))
+    # ForecastEx fee model isn't published consistently; use a reasonable
+    # placeholder of 1c per contract per side. Replace once IBKR confirms.
+    fees = 0.01 * qty
+    return px, fees
+
+
+def _fair_value_signal(bar: dict, position: int, params: dict) -> tuple[str | None, int, str]:
+    """Trade when |market - manual_fair_value| > min_edge.
+    For an MVP we accept a fair_value param (constant or piecewise) — when
+    you wire a model, this is the only function that needs to change."""
+    fair = float(params.get("fair_value", 0.5))
+    min_edge = float(params.get("min_edge", 0.03))
+    qty = int(params.get("qty", 100))
+    px = float(bar.get("c") or 0.0)
+    if px <= 0:
+        return None, 0, "no_price"
+    edge_buy = fair - px
+    edge_sell = px - fair
+    if position == 0 and edge_buy >= min_edge:
+        return "BUY", qty, f"edge_buy={edge_buy:.3f}"
+    if position > 0 and edge_sell >= min_edge:
+        return "SELL", position, f"edge_sell={edge_sell:.3f}"
+    return None, 0, ""
+
+
+STRATEGIES = {
+    "fair_value_edge":   _fair_value_signal,
+    # The following are stubs — accept the same params interface, return no
+    # signal until their MVP signal logic is filled in. They show in the UI
+    # as templates so the user can see the planned shape.
+    "short_tail":        lambda b, p, par: (None, 0, "stub"),
+    "longshot_catalyst": lambda b, p, par: (None, 0, "stub"),
+    "passive_mm":        lambda b, p, par: (None, 0, "stub"),
+    "cross_rv":          lambda b, p, par: (None, 0, "stub"),
+    "drift_momentum":    lambda b, p, par: (None, 0, "stub"),
+    "mean_reversion":    lambda b, p, par: (None, 0, "stub"),
+}
+
+
+@app.post("/api/backtest/run")
+async def backtest_run(payload: dict):
+    """Run an event-driven backtest over real IBKR history bars.
+
+    Body:
+      strategy:   one of STRATEGIES keys
+      conids:     list[int]  — universe to test
+      period:     "1m" | "3m" | "6m" | "1y"   (passed through to /history)
+      bar:        "1d" | "1h" | "5min" | …
+      bankroll:   starting cash, default 10_000
+      params:     strategy-specific dict (e.g. fair_value, min_edge, qty)
+    """
+    strat = payload.get("strategy", "fair_value_edge")
+    if strat not in STRATEGIES:
+        raise HTTPException(400, f"unknown strategy: {strat}")
+    conids = payload.get("conids") or []
+    if not conids:
+        raise HTTPException(400, "conids[] is required")
+    period = payload.get("period", "3m")
+    bar    = payload.get("bar", "1d")
+    bankroll = float(payload.get("bankroll", 10_000))
+    params   = payload.get("params", {})
+
+    signal_fn = STRATEGIES[strat]
+    cash = bankroll
+    positions: dict[int, dict] = {}     # conid -> {qty, avg_px}
+    trades: list[dict] = []
+    equity_pts: list[dict] = []
+    bars_by_conid: dict[int, list[dict]] = {}
+
+    # Pull history per conid in series; cheap enough at MVP scale, easy to parallelise later.
+    for cid in conids:
+        try:
+            r = await ibkr_get(
+                "/v1/api/iserver/marketdata/history",
+                params={"conid": str(cid), "period": period, "bar": bar},
+            )
+            bars_by_conid[int(cid)] = r.get("data", []) or []
+        except HTTPException as e:
+            bars_by_conid[int(cid)] = []
+            trades.append({"ts": 0, "conid": cid, "note": f"history error: {e.detail}"})
+
+    # Build a single time-ordered event stream so PnL marks across markets correctly.
+    events: list[tuple[int, int, dict]] = []
+    for cid, bars in bars_by_conid.items():
+        for b in bars:
+            t = int(b.get("t") or b.get("time") or 0)
+            events.append((t, cid, b))
+    events.sort(key=lambda e: e[0])
+
+    if not events:
+        return {"error": "no_history", "bars_by_conid": {str(k): len(v) for k, v in bars_by_conid.items()}}
+
+    for ts, cid, bar in events:
+        pos = positions.get(cid, {"qty": 0, "avg_px": 0.0})
+        action, qty, reason = signal_fn(bar, pos["qty"], params)
+        if action and qty > 0:
+            fill_px, fees = _conservative_fill(action, bar, qty)
+            cost = fill_px * qty + fees
+            if action == "BUY":
+                cash -= cost
+                new_qty = pos["qty"] + qty
+                pos["avg_px"] = ((pos["avg_px"] * pos["qty"]) + fill_px * qty) / max(1, new_qty)
+                pos["qty"] = new_qty
+            else:  # SELL
+                cash += fill_px * qty - fees
+                pos["qty"] -= qty
+                if pos["qty"] <= 0:
+                    pos["qty"] = 0
+                    pos["avg_px"] = 0.0
+            positions[cid] = pos
+            trades.append({
+                "ts": ts, "conid": cid, "side": action, "qty": qty,
+                "fill_px": round(fill_px, 4), "fees": round(fees, 4), "reason": reason,
+            })
+
+        # mark-to-market across all positions at this timestamp
+        mtm = cash
+        for c2, p2 in positions.items():
+            last = bar["c"] if c2 == cid else None
+            if last is None:
+                bs = bars_by_conid.get(c2, [])
+                # find the latest bar for c2 with t <= ts
+                last_bar = next((bb for bb in reversed(bs) if (bb.get("t") or 0) <= ts), None)
+                last = (last_bar or {}).get("c") or p2["avg_px"]
+            mtm += float(last) * p2["qty"]
+        equity_pts.append({"ts": ts, "equity": round(mtm, 2)})
+
+    # Final settlement at the last available price (we can't see resolution outcome here)
+    final_equity = equity_pts[-1]["equity"] if equity_pts else bankroll
+    peak = bankroll
+    max_dd = 0.0
+    for p in equity_pts:
+        peak = max(peak, p["equity"])
+        dd = (peak - p["equity"]) / max(1.0, peak)
+        max_dd = max(max_dd, dd)
+
+    realised = [t for t in trades if t.get("side") == "SELL"]
+    winners = [t for t in realised]  # MVP: rough win/loss requires entry pairing — skip until needed
+    metrics = {
+        "starting_bankroll": bankroll,
+        "ending_equity":     round(final_equity, 2),
+        "net_pnl":           round(final_equity - bankroll, 2),
+        "net_roi_pct":       round(((final_equity / bankroll) - 1.0) * 100.0, 3),
+        "max_drawdown_pct":  round(max_dd * 100.0, 3),
+        "trade_count":       len(trades),
+        "events":            len(events),
+        "conids":            len(conids),
+        "strategy":          strat,
+        "period":            period,
+        "bar":               bar,
+    }
+    return {
+        "metrics": metrics,
+        "equity_curve": equity_pts,
+        "trades": trades,
+        "params": params,
+    }
+
+
+@app.get("/api/backtest/strategies")
+def backtest_strategies():
+    return {"strategies": list(STRATEGIES.keys())}
 
 
 # ─── static index ───

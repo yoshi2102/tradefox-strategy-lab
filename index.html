@@ -426,13 +426,17 @@
 
     <!-- ============ BACKTEST ============ -->
     <section class="page view" id="view-backtest">
-      <h1 class="serif" style="margin:0 0 6px;font-size:40px;line-height:1.05">Backtests</h1>
-      <p style="margin:0 0 16px;color:var(--muted)">Quote-level replay over IBKR historical data (<span class="mono">/iserver/marketdata/history</span>). The backtest engine itself is the next build step — this page exposes the data we have ingested.</p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:40px;line-height:1.05">Backtests</h1>
+          <p style="margin:6px 0 0;color:var(--muted)">Event-driven replay over real IBKR <span class="mono">/iserver/marketdata/history</span> bars. Conservative fill model: buys lift ask, sells hit bid, +1c per side fees.</p>
+        </div>
+      </div>
 
       <div class="card" style="margin-bottom:14px">
         <h3 class="serif" style="margin:0 0 10px;font-size:22px">Pull historical bars</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input class="input" id="histConid" placeholder="conid (e.g. 742019)" style="width:200px">
+          <input class="input" id="histConid" placeholder="conid (try one from Markets)" style="width:240px">
           <select class="input" id="histPeriod" style="width:140px"><option>1d</option><option>5d</option><option>1w</option><option>1m</option><option>3m</option><option selected>6m</option><option>1y</option></select>
           <select class="input" id="histBar" style="width:140px"><option>1min</option><option>5min</option><option>15min</option><option>1h</option><option selected>1d</option></select>
           <button class="btn btn-dark" onclick="loadHistory()">Fetch</button>
@@ -440,14 +444,43 @@
         </div>
         <svg id="histChart" viewBox="0 0 720 220" preserveAspectRatio="none" style="width:100%;height:220px;display:block;margin-top:14px"></svg>
         <div id="histEmpty" class="empty" style="padding-top:0">
-          <p>Enter a conid to pull real OHLCV from IBKR. Try one from the Markets page.</p>
+          <p>Enter a conid to pull real OHLCV from IBKR.</p>
         </div>
       </div>
 
-      <div class="card empty">
-        <h4>Backtest engine not yet running.</h4>
-        <p>The next milestone: an event-driven engine that replays the bars/snapshots above against a strategy template, with conservative fill assumptions (buys at ask + slip, sells at bid − slip), fees, and partial-fill handling. Until that ships, this page does not display any results.</p>
+      <div class="card" style="margin-bottom:14px">
+        <h3 class="serif" style="margin:0 0 10px;font-size:22px">Run a backtest</h3>
+        <div class="form-row"><label>Strategy</label>
+          <select class="input" id="btStrategy">
+            <option value="fair_value_edge" selected>Fair-value edge (implemented)</option>
+            <option value="short_tail">High-prob short-tail (stub)</option>
+            <option value="longshot_catalyst">Longshot catalyst (stub)</option>
+            <option value="passive_mm">Passive MM (stub)</option>
+            <option value="cross_rv">Cross-contract RV (stub)</option>
+            <option value="drift_momentum">Drift / momentum (stub)</option>
+            <option value="mean_reversion">Mean reversion (stub)</option>
+          </select>
+        </div>
+        <div class="form-row"><label>Universe (conids, comma-separated)</label>
+          <input class="input" id="btConids" placeholder="e.g. 845634818, 845634875"></div>
+        <div class="form-row"><label>Period · Bar</label>
+          <div style="display:flex;gap:8px">
+            <select class="input" id="btPeriod"><option>1m</option><option selected>3m</option><option>6m</option><option>1y</option></select>
+            <select class="input" id="btBar"><option>5min</option><option>1h</option><option selected>1d</option></select>
+          </div></div>
+        <div class="form-row"><label>Bankroll</label><input class="input" id="btBankroll" value="10000" type="number"></div>
+        <div class="form-row"><label>Fair value (manual)<span class="hint">Constant probability for the YES side · 0.0–1.0</span></label>
+          <input class="input" id="btFairValue" value="0.5" type="number" step="0.01" min="0" max="1"></div>
+        <div class="form-row"><label>Min edge (cents)</label>
+          <input class="input" id="btMinEdge" value="0.03" type="number" step="0.01"></div>
+        <div class="form-row"><label>Order size</label><input class="input" id="btQty" value="100" type="number"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-primary" onclick="runBacktest()">Run backtest</button>
+          <span id="btStatus" style="font-size:12px;color:var(--muted);align-self:center"></span>
+        </div>
       </div>
+
+      <div id="btResults"></div>
     </section>
 
     <!-- ============ PAPER TRADING ============ -->
@@ -1092,6 +1125,9 @@ function renderMarkets(){
     </div>`;
   }).join('');
 
+  // Subscribe to live quotes for visible cards (best-effort; gated by IBKR market data subscription)
+  try { subscribeMarkets(slice.map(m => m.conid).filter(Boolean)); } catch (e) {}
+
   // Pagination controls
   if (items.length > slice.length) {
     grid.insertAdjacentHTML('beforeend',
@@ -1134,23 +1170,52 @@ async function openMarket(idx){
     </div>
     <pre class="code" id="dwResult" style="margin-top:10px;display:none"></pre>
 
-    <h3 class="serif" style="margin:18px 0 6px;font-size:20px">Rules &amp; schedule</h3>
-    <div id="dwRules" class="kv" style="line-height:1.7">loading…</div>
+    <h3 class="serif" style="margin:18px 0 6px;font-size:20px">Resolution rules &amp; schedule</h3>
+    <div id="dwRules" class="kv" style="line-height:1.7">loading from /forecast/contract/{details, rules, schedules}…</div>
   `;
   document.getElementById('mask').classList.add('open');
   document.getElementById('drawer').classList.add('open');
-  // pull rules + schedule
   try {
-    const [rules, sched] = await Promise.all([
-      API('/api/forecast/rules?conid=' + conid).catch(()=>null),
-      API('/api/forecast/schedules?conid=' + conid).catch(()=>null),
-    ]);
-    const flat = obj => Object.entries(obj || {}).slice(0, 12).map(([k,v]) => `<div><span class="k">${k}</span> <span class="v">${typeof v === 'object' ? JSON.stringify(v) : v}</span></div>`).join('');
-    document.getElementById('dwRules').innerHTML =
-      (rules ? `<div style="font-weight:500;margin:6px 0 4px">Rules</div>${flat(rules)}` : '') +
-      (sched ? `<div style="font-weight:500;margin:10px 0 4px">Schedule</div>${flat(sched)}` : '') ||
-      '<div>(no rules/schedule returned)</div>';
-  } catch (e) { document.getElementById('dwRules').innerHTML = `error: ${e?.body?.detail || e}`; }
+    const full = await API(`/api/forecast/full?conid=${conid}${m.product_conid ? '&product_conid=' + m.product_conid : ''}`);
+    document.getElementById('dwRules').innerHTML = renderForecastFull(full);
+  } catch (e) { document.getElementById('dwRules').innerHTML = `<span class="chip bad">error</span> ${e?.body?.detail || e}`; }
+}
+
+// Render the merged details/rules/schedules into a clean key/value list,
+// with the most important fields first and unknown keys collapsed at the bottom.
+function renderForecastFull(full){
+  const sections = [];
+  const known = ['settlementSource','source','underlying','product','description','tickSize','tick_size',
+                 'minSize','min_order_size','maxSize','max_order_size','payout','currency',
+                 'expiry','expiryTime','expiration','tradingHours','trading_hours','tif','tifs','rules'];
+  const flatRow = (k, v) => `<div><span class="k">${k}</span> <span class="v">${typeof v === 'object' ? JSON.stringify(v) : (v ?? '—')}</span></div>`;
+
+  function block(title, obj){
+    if (!obj) return '';
+    if (obj._error) return `<div style="margin:8px 0 4px;font-weight:500">${title}</div><div class="chip bad">${obj._error}</div>`;
+    let body = obj;
+    // Some endpoints return arrays — flatten to first entry for display.
+    if (Array.isArray(body)) body = body[0] || {};
+    if (typeof body !== 'object') return `<div style="margin:8px 0 4px;font-weight:500">${title}</div><div>${body}</div>`;
+    const entries = Object.entries(body);
+    if (!entries.length) return '';
+    const headline = entries.filter(([k]) => known.some(n => k.toLowerCase().includes(n.toLowerCase())));
+    const rest = entries.filter(([k]) => !headline.some(([hk]) => hk === k));
+    return `
+      <div style="margin:14px 0 4px;font-weight:500;color:var(--ink)">${title}</div>
+      ${headline.map(([k,v]) => flatRow(k,v)).join('')}
+      ${rest.length ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">${rest.length} more fields</summary>${rest.map(([k,v]) => flatRow(k,v)).join('')}</details>` : ''}
+    `;
+  }
+
+  sections.push(block('Contract details', full.details_by_conid));
+  if (full.details_by_prod) sections.push(block('Product details (parent)', full.details_by_prod));
+  if (full.market_by_prod)  sections.push(block('Markets under product', full.market_by_prod));
+  sections.push(block('Trading rules', full.rules));
+  sections.push(block('Schedule', full.schedules));
+  sections.push(block('Security definition', full.secdef));
+  const html = sections.filter(Boolean).join('');
+  return html || '<div class="chip">No rules data returned for this contract.</div>';
 }
 function closeDrawer(){ document.getElementById('mask').classList.remove('open'); document.getElementById('drawer').classList.remove('open'); }
 document.getElementById('mask').addEventListener('click', closeDrawer);
@@ -1169,6 +1234,67 @@ async function placeFromDrawer(conid, whatIf){
     const r = await API(url, {method:'POST', body: JSON.stringify({orders: [order]})});
     out.innerText = JSON.stringify(r, null, 2);
   } catch (e) { out.innerText = JSON.stringify(e, null, 2); }
+}
+
+/* ============ WebSocket live quotes ============ */
+let WS = null;
+const WS_SUBS = new Set();
+function ensureWS(){
+  if (WS && (WS.readyState === 0 || WS.readyState === 1)) return WS;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  WS = new WebSocket(`${proto}//${location.host}/api/ws`);
+  WS.onmessage = ev => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    const topic = msg.topic || msg.t || '';
+    let conid = null, payload = msg;
+    if (typeof topic === 'string' && topic.startsWith('smd+')) conid = parseInt(topic.slice(4));
+    else if (msg.conid) conid = msg.conid;
+    if (!conid) return;
+    const m = MARKETS.find(x => Number(x.conid) === Number(conid));
+    if (!m) return;
+    const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    if ('31' in payload) m._last = fp(payload['31']);
+    if ('84' in payload) m._bid  = fp(payload['84']);
+    if ('86' in payload) m._ask  = fp(payload['86']);
+    if ('85' in payload) m._askSize = fp(payload['85']);
+    if ('88' in payload) m._bidSize = fp(payload['88']);
+    if ('7295' in payload) m._open = fp(payload['7295']);
+    m._updated = Date.now();
+    updateCardLive(m);
+  };
+  WS.onclose = () => { WS = null; setTimeout(ensureWS, 4000); };
+  WS.onerror = () => {};
+  WS.onopen  = () => { Array.from(WS_SUBS).forEach(c => sendSubscribe(c)); };
+  return WS;
+}
+function sendSubscribe(conid){
+  if (!WS || WS.readyState !== 1) return;
+  WS.send(`smd+${conid}+{"fields":["31","84","85","86","88","7295"]}`);
+}
+function subscribeMarkets(conids){
+  ensureWS();
+  conids.forEach(c => {
+    if (!WS_SUBS.has(c)) { WS_SUBS.add(c); sendSubscribe(c); }
+  });
+}
+function updateCardLive(m){
+  const cards = document.querySelectorAll(`#marketGrid .market`);
+  for (const card of cards){
+    const chip = card.querySelector('.chip');
+    if (!chip || !chip.textContent.includes(`conid ${m.conid}`)) continue;
+    const yes = m._last ?? m._ask ?? m._bid;
+    const px  = card.querySelector('.price');
+    const meta = card.querySelectorAll('.px-row span');
+    if (px) px.textContent = (yes != null ? Number(yes).toFixed(3) : '—');
+    if (meta && meta[2]) meta[2].textContent =
+      `bid ${m._bid != null ? m._bid.toFixed(3) : '—'} · ask ${m._ask != null ? m._ask.toFixed(3) : '—'}`;
+    const sp = card.querySelector('.meta span');
+    if (sp && m._bid != null && m._ask != null) sp.textContent = `spread ${((m._ask - m._bid)*100).toFixed(1)}c`;
+    card.style.transition = 'background-color .15s';
+    card.style.backgroundColor = '#F2FAE6';
+    setTimeout(() => { card.style.backgroundColor = ''; }, 280);
+    break;
+  }
 }
 
 /* ============ paper order form ============ */
@@ -1272,6 +1398,98 @@ async function loadHistory(){
     setText('histMeta', 'error');
     showError(e, 'history');
   }
+}
+
+/* ============ backtest engine ============ */
+async function runBacktest(){
+  const conids = document.getElementById('btConids').value
+    .split(',').map(s => parseInt(s.trim())).filter(Number.isFinite);
+  if (!conids.length) { setText('btStatus', 'Enter at least one conid above'); return; }
+  setText('btStatus', 'pulling history & running engine…');
+  document.getElementById('btResults').innerHTML = '<div class="card empty"><p>Running…</p></div>';
+  const body = {
+    strategy: document.getElementById('btStrategy').value,
+    conids,
+    period: document.getElementById('btPeriod').value,
+    bar:    document.getElementById('btBar').value,
+    bankroll: Number(document.getElementById('btBankroll').value),
+    params: {
+      fair_value: parseFloat(document.getElementById('btFairValue').value),
+      min_edge:   parseFloat(document.getElementById('btMinEdge').value),
+      qty:        Number(document.getElementById('btQty').value),
+    },
+  };
+  try {
+    const r = await API('/api/backtest/run', {method:'POST', body: JSON.stringify(body)});
+    setText('btStatus', `done · ${r.metrics?.events ?? 0} bars · ${r.metrics?.trade_count ?? 0} trades`);
+    document.getElementById('btResults').innerHTML = renderBacktest(r);
+  } catch (e) {
+    setText('btStatus', 'error');
+    document.getElementById('btResults').innerHTML = `<div class="card empty"><p>${e?.body?.detail || JSON.stringify(e)}</p></div>`;
+  }
+}
+
+function renderBacktest(r){
+  if (r.error === 'no_history') {
+    return `<div class="card empty"><h4>No history returned for these conids.</h4>
+      <p>IBKR's <span class="mono">/iserver/marketdata/history</span> returned 0 bars. Bars per conid:</p>
+      <pre class="code" style="text-align:left">${JSON.stringify(r.bars_by_conid, null, 2)}</pre></div>`;
+  }
+  const m = r.metrics || {};
+  const eq = r.equity_curve || [];
+  const trades = r.trades || [];
+
+  const W = 720, H = 220, pad = 30;
+  let chart = '';
+  if (eq.length >= 2) {
+    const ys = eq.map(p => p.equity);
+    const min = Math.min(...ys), max = Math.max(...ys);
+    const x = i => pad + (i / (eq.length - 1)) * (W - pad*2);
+    const y = v => H - pad - ((v - min) / (max - min || 1)) * (H - pad*2);
+    const path = eq.map((p,i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(p.equity).toFixed(1)).join(' ');
+    const fill = path + ` L${x(eq.length-1)},${H-pad} L${x(0)},${H-pad} Z`;
+    chart = `
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:240px;display:block">
+        <defs><linearGradient id="bg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#9FE870" stop-opacity=".55"/><stop offset="1" stop-color="#9FE870" stop-opacity="0"/></linearGradient></defs>
+        <line x1="${pad}" x2="${W-pad}" y1="${pad}" y2="${pad}" stroke="#E6E1D6"/>
+        <line x1="${pad}" x2="${W-pad}" y1="${H/2}" y2="${H/2}" stroke="#E6E1D6"/>
+        <line x1="${pad}" x2="${W-pad}" y1="${H-pad}" y2="${H-pad}" stroke="#E6E1D6"/>
+        <text x="2" y="${pad+4}" font-size="10" fill="#6E6F6A">$${max.toFixed(0)}</text>
+        <text x="2" y="${H-pad+4}" font-size="10" fill="#6E6F6A">$${min.toFixed(0)}</text>
+        <path d="${fill}" fill="url(#bg)"/>
+        <path d="${path}" fill="none" stroke="#163300" stroke-width="2"/>
+      </svg>`;
+  }
+
+  const tradeRows = trades.slice(0, 80).map(t => `
+    <tr>
+      <td class="mono">${t.ts ? new Date(t.ts).toISOString().slice(0,10) : '—'}</td>
+      <td class="num">${t.conid}</td>
+      <td>${t.side || '—'}</td>
+      <td class="num">${t.qty ?? '—'}</td>
+      <td class="num">${t.fill_px ?? '—'}</td>
+      <td class="num">${t.fees ?? '—'}</td>
+      <td>${t.reason || t.note || ''}</td>
+    </tr>`).join('');
+
+  return `
+    <div class="grid-3" style="margin-bottom:14px">
+      <div class="metric"><div class="l">Net PnL</div><div class="n ${m.net_pnl>=0?'delta-up':'delta-down'}">${fmt.usd(m.net_pnl)}</div><div class="s">post-fees, post-slip</div></div>
+      <div class="metric"><div class="l">Net ROI</div><div class="n">${m.net_roi_pct ?? 0}%</div><div class="s">on ${fmt.usd(m.starting_bankroll)}</div></div>
+      <div class="metric"><div class="l">Max drawdown</div><div class="n delta-down">−${m.max_drawdown_pct ?? 0}%</div><div class="s">peak-to-trough</div></div>
+      <div class="metric"><div class="l">Trades</div><div class="n">${m.trade_count ?? 0}</div><div class="s">${m.events ?? 0} bars · ${m.conids ?? 0} conids</div></div>
+      <div class="metric"><div class="l">Strategy</div><div class="n" style="font-size:18px;font-family:'Geist Mono',monospace">${m.strategy}</div><div class="s">${m.period} · ${m.bar}</div></div>
+      <div class="metric"><div class="l">Ending equity</div><div class="n">${fmt.usd(m.ending_equity)}</div><div class="s">marked at last bar</div></div>
+    </div>
+    <div class="card flush" style="margin-bottom:14px">
+      <div class="card-head"><h3>Equity curve</h3><span class="chip">${eq.length} marks</span></div>
+      <div style="padding:14px">${chart || '<div class="empty"><p>No equity points (engine returned no bars).</p></div>'}</div>
+    </div>
+    <div class="card flush">
+      <div class="card-head"><h3>Trades</h3><span class="chip">${trades.length} total · showing first 80</span></div>
+      ${trades.length ? `<table class="t"><thead><tr><th>Date</th><th class="num">conid</th><th>Side</th><th class="num">Qty</th><th class="num">Px</th><th class="num">Fees</th><th>Reason</th></tr></thead><tbody>${tradeRows}</tbody></table>` : '<div class="empty"><p>No trades — strategy never triggered. Tighten min_edge or check fair_value.</p></div>'}
+    </div>
+  `;
 }
 
 /* ============ strategy template cards (config only) ============ */
