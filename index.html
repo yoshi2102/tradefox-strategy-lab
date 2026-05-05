@@ -395,13 +395,9 @@
       </div>
 
       <div id="noQuotesBanner" class="card" style="display:none;margin-bottom:14px;border-color:#F0CF8E;background:#FCF4E2">
-        <h3 class="serif" style="margin:0 0 6px;font-size:20px;color:#6E4D11">Market metadata loaded, but no live quotes yet.</h3>
-        <p style="margin:0 0 8px;font-size:13px;color:#6E4D11">
-          IBKR's <span class="mono">/forecast/category/tree</span> returned all 1,000+ ForecastEx contracts (titles, conids, exchanges).
-          But <span class="mono">/iserver/marketdata/snapshot</span> is returning fresh timestamps with no <span class="mono">bid/ask/last</span> fields — meaning the server acknowledges your subscription request but isn't pushing quote data.
-        </p>
+        <h3 class="serif" style="margin:0 0 6px;font-size:20px;color:#6E4D11">Loaded ForecastEx universe — quotes still warming up.</h3>
         <p style="margin:0;font-size:12.5px;color:#8A6814">
-          Most likely cause: <b>ForecastEx market data subscription isn't enabled on this paper account</b> (separate from API access). Reply to John C. on the existing thread asking him to enable ForecastEx market data subscription on <b>DUP169897</b>. The trading endpoints (orders, positions, /forecast metadata) all work — only live quotes are gated.
+          Snapshots take a few seconds to populate per IBKR's documented warmup. If this banner stays up after ~10 seconds, hit <b>Refresh</b>. Field set: 84/86 (bid/ask), 87 (vol), 7638 (OI), 8393/8394 (YES/NO %), 6509 (availability flag).
         </p>
       </div>
 
@@ -1013,8 +1009,10 @@ async function enrichWithSnapshots(){
   // IBKR snapshot quirks:
   //   1. First call per conid is a "warmup" that often returns only metadata.
   //   2. Payload size limit — chunk conids in batches of 30.
-  // So: warmup pass then a real pass with a short delay between.
-  const fields = '31,84,85,86,88,7295,7296';
+  // ForecastEx fields (per IBKR / John C., May 2026):
+  //   84/86 Bid/Ask · 85/88 sizes · 87 Volume · 7638 OI
+  //   8393 YES probability · 8394 NO probability · 6509 availability flag
+  const fields = '84,85,86,87,88,7638,8393,8394,6509';
   const chunks = [];
   for (let i = 0; i < conids.length; i += 30) chunks.push(conids.slice(i, i+30));
 
@@ -1039,13 +1037,15 @@ async function enrichWithSnapshots(){
   MARKETS.forEach(m => {
     const s = byConid[String(m.conid)]; if (!s) return;
     const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
-    m._last     = fp(s['31']);
     m._bid      = fp(s['84']);
     m._ask      = fp(s['86']);
     m._askSize  = fp(s['85']);
     m._bidSize  = fp(s['88']);
-    m._open     = fp(s['7295']);
-    m._close    = fp(s['7296']);
+    m._volume   = fp(s['87']);
+    m._oi       = fp(s['7638']);
+    m._yesPct   = fp(s['8393']);   // YES probability %
+    m._noPct    = fp(s['8394']);   // NO  probability %
+    m._mdAvail  = s['6509'] || null;
     m._updated  = s._updated;
   });
 }
@@ -1058,8 +1058,8 @@ function renderMarkets(){
   const maxPx = parseFloat(document.getElementById('filterMaxPrice').value);
   const activeOnly = document.getElementById('filterActiveOnly')?.checked;
 
-  // Active = has a bid, ask, or last price returned by snapshot.
-  const isActive = m => (m._bid != null) || (m._ask != null) || (m._last != null);
+  // Active = any of bid/ask/yes%/no%/volume returned by snapshot.
+  const isActive = m => (m._bid != null) || (m._ask != null) || (m._yesPct != null) || (m._noPct != null) || (m._volume != null);
 
   const items = MARKETS.filter(m => {
     if (cat && String(m.categoryId || m.parentId || '') !== String(cat)) return false;
@@ -1104,23 +1104,33 @@ function renderMarkets(){
   if (PAGE_OFFSET > items.length) PAGE_OFFSET = 0;
   const slice = items.slice(0, PAGE_OFFSET + PAGE);
   grid.innerHTML = slice.map(m => {
-    const yes = m._last ?? m._ask ?? m._bid;
     const sp = (m._bid != null && m._ask != null) ? ((m._ask - m._bid)*100).toFixed(1) + 'c' : '—';
+    const yes = m._yesPct != null ? m._yesPct : (m._ask != null ? m._ask*100 : null);
+    const no  = m._noPct  != null ? m._noPct  : (m._bid != null ? (1-m._bid)*100 : null);
+    const vol = m._volume != null ? m._volume.toLocaleString() : '—';
+    const oi  = m._oi != null ? m._oi.toLocaleString() : '—';
     return `
-    <div class="market" onclick="openMarket(${MARKETS.indexOf(m)})">
+    <div class="market" data-conid="${m.conid}" onclick="openMarket(${MARKETS.indexOf(m)})">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div class="cat" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${m._catPath || m._cat || ''}</div>
         <span class="chip">conid ${m.conid || ''}</span>
       </div>
       <div class="title">${m.title || '(untitled)'}</div>
-      <div class="px-row">
-        <span class="yes">YES</span>
-        <span class="price mono">${yes != null && !isNaN(yes) ? Number(yes).toFixed(3) : '—'}</span>
-        <span style="color:var(--muted);font-size:11px">bid ${m._bid != null && !isNaN(m._bid) ? m._bid.toFixed(3) : '—'} · ask ${m._ask != null && !isNaN(m._ask) ? m._ask.toFixed(3) : '—'}</span>
+      <div style="display:flex;gap:14px;margin:6px 0 10px">
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">YES</div>
+          <div class="serif" style="font-size:26px;line-height:1;color:${yes!=null?'var(--green-deep)':'var(--muted)'}">${yes != null ? yes.toFixed(0)+'%' : '—'}</div>
+          <div style="font-size:10px;color:var(--muted)">bid ${m._bid?.toFixed?.(3) ?? '—'}</div>
+        </div>
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">NO</div>
+          <div class="serif" style="font-size:26px;line-height:1;color:${no!=null?'var(--red)':'var(--muted)'}">${no != null ? no.toFixed(0)+'%' : '—'}</div>
+          <div style="font-size:10px;color:var(--muted)">ask ${m._ask?.toFixed?.(3) ?? '—'}</div>
+        </div>
       </div>
       <div class="meta">
-        <span>spread ${sp}</span>
-        <span>${m.symbol || m.exchange || ''}</span>
+        <span>spread ${sp} · vol ${vol}</span>
+        <span>OI ${oi}</span>
       </div>
     </div>`;
   }).join('');
@@ -1208,12 +1218,26 @@ function renderForecastFull(full){
     `;
   }
 
-  sections.push(block('Contract details', full.details_by_conid));
-  if (full.details_by_prod) sections.push(block('Product details (parent)', full.details_by_prod));
-  if (full.market_by_prod)  sections.push(block('Markets under product', full.market_by_prod));
-  sections.push(block('Trading rules', full.rules));
+  // Per IBKR May 2026 update: /iserver/contract/{conid}/info-and-rules is the canonical path.
+  // It returns market_rules_link (PDF of the OP T&Cs) which we surface as a clickable link.
+  const ir = full.info_and_rules;
+  if (ir && !ir._error) {
+    const linkRow = ir.rules?.market_rules_link
+      ? `<div style="margin:10px 0"><a href="${ir.rules.market_rules_link}" target="_blank" rel="noopener" class="btn btn-primary">📄 Open Operative Terms &amp; Conditions PDF</a></div>`
+      : '';
+    sections.push(`
+      <div style="margin:14px 0 4px;font-weight:500;color:var(--ink)">Contract info &amp; market rules</div>
+      ${linkRow}
+      ${block('— info', ir.info || ir).replace(/^<div[^>]*>[^<]*<\/div>/, '')}
+      ${ir.rules ? block('— rules', ir.rules).replace(/^<div[^>]*>[^<]*<\/div>/, '') : ''}
+    `);
+  } else if (ir?._error) {
+    sections.push(`<div style="margin:14px 0 4px;font-weight:500">Contract info &amp; market rules</div><div class="chip bad">${ir._error}</div>`);
+  }
   sections.push(block('Schedule', full.schedules));
   sections.push(block('Security definition', full.secdef));
+  if (full.forecast_details) sections.push(block('Forecast details (legacy)', full.forecast_details));
+  if (full.forecast_details_prod) sections.push(block('Forecast details — parent', full.forecast_details_prod));
   const html = sections.filter(Boolean).join('');
   return html || '<div class="chip">No rules data returned for this contract.</div>';
 }
@@ -1253,12 +1277,15 @@ function ensureWS(){
     const m = MARKETS.find(x => Number(x.conid) === Number(conid));
     if (!m) return;
     const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
-    if ('31' in payload) m._last = fp(payload['31']);
-    if ('84' in payload) m._bid  = fp(payload['84']);
-    if ('86' in payload) m._ask  = fp(payload['86']);
-    if ('85' in payload) m._askSize = fp(payload['85']);
-    if ('88' in payload) m._bidSize = fp(payload['88']);
-    if ('7295' in payload) m._open = fp(payload['7295']);
+    if ('84'   in payload) m._bid     = fp(payload['84']);
+    if ('86'   in payload) m._ask     = fp(payload['86']);
+    if ('85'   in payload) m._askSize = fp(payload['85']);
+    if ('88'   in payload) m._bidSize = fp(payload['88']);
+    if ('87'   in payload) m._volume  = fp(payload['87']);
+    if ('7638' in payload) m._oi      = fp(payload['7638']);
+    if ('8393' in payload) m._yesPct  = fp(payload['8393']);
+    if ('8394' in payload) m._noPct   = fp(payload['8394']);
+    if ('6509' in payload) m._mdAvail = payload['6509'];
     m._updated = Date.now();
     updateCardLive(m);
   };
@@ -1269,7 +1296,8 @@ function ensureWS(){
 }
 function sendSubscribe(conid){
   if (!WS || WS.readyState !== 1) return;
-  WS.send(`smd+${conid}+{"fields":["31","84","85","86","88","7295"]}`);
+  // Same field set IBKR's John C. confirmed for ForecastEx event contracts.
+  WS.send(`smd+${conid}+{"fields":["84","85","86","87","88","7638","8393","8394","6509"]}`);
 }
 function subscribeMarkets(conids){
   ensureWS();
@@ -1278,23 +1306,31 @@ function subscribeMarkets(conids){
   });
 }
 function updateCardLive(m){
-  const cards = document.querySelectorAll(`#marketGrid .market`);
-  for (const card of cards){
-    const chip = card.querySelector('.chip');
-    if (!chip || !chip.textContent.includes(`conid ${m.conid}`)) continue;
-    const yes = m._last ?? m._ask ?? m._bid;
-    const px  = card.querySelector('.price');
-    const meta = card.querySelectorAll('.px-row span');
-    if (px) px.textContent = (yes != null ? Number(yes).toFixed(3) : '—');
-    if (meta && meta[2]) meta[2].textContent =
-      `bid ${m._bid != null ? m._bid.toFixed(3) : '—'} · ask ${m._ask != null ? m._ask.toFixed(3) : '—'}`;
-    const sp = card.querySelector('.meta span');
-    if (sp && m._bid != null && m._ask != null) sp.textContent = `spread ${((m._ask - m._bid)*100).toFixed(1)}c`;
-    card.style.transition = 'background-color .15s';
-    card.style.backgroundColor = '#F2FAE6';
-    setTimeout(() => { card.style.backgroundColor = ''; }, 280);
-    break;
+  // Find the card via data-conid (set during render) — much faster than text search.
+  const card = document.querySelector(`#marketGrid .market[data-conid="${m.conid}"]`);
+  if (!card) return;
+  const yes = m._yesPct != null ? m._yesPct : (m._ask != null ? m._ask*100 : null);
+  const no  = m._noPct  != null ? m._noPct  : (m._bid != null ? (1-m._bid)*100 : null);
+  const yesEl = card.querySelector('div[style*="flex:1"]:nth-child(1) .serif');
+  const noEl  = card.querySelector('div[style*="flex:1"]:nth-child(2) .serif');
+  if (yesEl) yesEl.textContent = yes != null ? yes.toFixed(0)+'%' : '—';
+  if (noEl)  noEl.textContent  = no  != null ? no.toFixed(0)+'%'  : '—';
+  // bid/ask sub-rows
+  const yesSub = card.querySelectorAll('div[style*="font-size:10px"][style*="var(--muted)"]')[1];
+  const noSub  = card.querySelectorAll('div[style*="font-size:10px"][style*="var(--muted)"]')[3];
+  if (yesSub) yesSub.textContent = `bid ${m._bid?.toFixed?.(3) ?? '—'}`;
+  if (noSub)  noSub.textContent  = `ask ${m._ask?.toFixed?.(3) ?? '—'}`;
+  // meta
+  const metaSpans = card.querySelectorAll('.meta span');
+  if (metaSpans[0]) {
+    const sp = (m._bid != null && m._ask != null) ? ((m._ask - m._bid)*100).toFixed(1) + 'c' : '—';
+    const vol = m._volume != null ? m._volume.toLocaleString() : '—';
+    metaSpans[0].textContent = `spread ${sp} · vol ${vol}`;
   }
+  if (metaSpans[1]) metaSpans[1].textContent = `OI ${m._oi != null ? m._oi.toLocaleString() : '—'}`;
+  card.style.transition = 'background-color .15s';
+  card.style.backgroundColor = '#F2FAE6';
+  setTimeout(() => { card.style.backgroundColor = ''; }, 280);
 }
 
 /* ============ paper order form ============ */

@@ -523,31 +523,43 @@ async def forecast_schedules(conid: str):
 
 @app.get("/api/forecast/full")
 async def forecast_full(conid: str, product_conid: str | None = None):
-    """One-stop call for the drawer: details + rules + schedules + secdef, with
-    each piece resilient to per-endpoint failures so partial data still renders."""
+    """One-stop call for the drawer: contract info + rules + schedules + secdef.
+    Per John C. (IBKR API Integration, May 2026), the canonical path for rules
+    is /iserver/contract/{conid}/info-and-rules — returns both info and rules
+    in one call. The old /forecast/contract/* endpoints are kept as fallbacks
+    in case the contract is structured for them.
+    """
     out: dict[str, Any] = {"conid": conid, "product_conid": product_conid}
-    async def safe(name: str, path: str, params: dict):
+    async def safe(name: str, path: str, params: dict | None = None):
         try:
             out[name] = await ibkr_get(path, params=params)
         except HTTPException as e:
             out[name] = {"_error": f"{e.status_code}: {e.detail}"}
         except Exception as e:
             out[name] = {"_error": str(e)}
-    # Try the obvious shapes; whichever return useful data, the frontend will use.
-    await safe("details_by_conid",   "/v1/api/forecast/contract/details", {"conids": conid})
+
+    # Primary: the new combined endpoint John C. flagged.
+    await safe("info_and_rules", f"/v1/api/iserver/contract/{conid}/info-and-rules")
+    # Useful supplements.
+    await safe("secdef",         "/v1/api/iserver/secdef/info", {"conid": conid})
+    await safe("schedules",      "/v1/api/forecast/contract/schedules", {"conid": conid})
+    # Legacy fallbacks (often 500 on event contracts but sometimes useful).
+    await safe("forecast_details", "/v1/api/forecast/contract/details", {"conids": conid})
     if product_conid:
-        await safe("details_by_prod","/v1/api/forecast/contract/details", {"conids": product_conid})
-        await safe("market_by_prod", "/v1/api/forecast/contract/market",  {"conid": product_conid})
-    await safe("rules",     "/v1/api/forecast/contract/rules",     {"conid": conid})
-    await safe("schedules", "/v1/api/forecast/contract/schedules", {"conid": conid})
-    await safe("secdef",    "/v1/api/iserver/secdef/info",         {"conid": conid})
+        await safe("forecast_details_prod", "/v1/api/forecast/contract/details", {"conids": product_conid})
     return out
 
 
 # ─── market data ───
 @app.get("/api/marketdata/snapshot")
-async def md_snapshot(conids: str, fields: str = "31,84,86,88,85"):
-    # 31=Last, 84=Bid, 85=AskSize, 86=Ask, 88=BidSize
+async def md_snapshot(conids: str, fields: str = "84,85,86,87,88,7638,8393,8394,6509"):
+    # ForecastEx (per IBKR / John C., May 2026):
+    #   84   Bid              86   Ask
+    #   85   Ask Size         88   Bid Size
+    #   87   Volume           7638 Option Open Interest
+    #   8393 YES probability  8394 NO probability
+    #   6509 Market data availability flag (RealTime / Delayed / Frozen / etc.)
+    # Equity-style fields (31=Last) are typically blank on event contracts.
     return await ibkr_get("/v1/api/iserver/marketdata/snapshot", params={"conids": conids, "fields": fields})
 
 
