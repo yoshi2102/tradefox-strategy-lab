@@ -1218,28 +1218,175 @@ function renderForecastFull(full){
     `;
   }
 
-  // Per IBKR May 2026 update: /iserver/contract/{conid}/info-and-rules is the canonical path.
-  // It returns market_rules_link (PDF of the OP T&Cs) which we surface as a clickable link.
+  // ───── Leaf chain (the actual tradeable Yes/No legs) ─────
+  // /forecast/contract/market?underlyingConid={parent}&exchange=FORECASTX returns
+  // each strike × side with its own conid. We pull live snapshots for each leaf
+  // so the user can see real Y/N prices side-by-side and place an order on the
+  // exact leg they want.
+  const lv = full.leaves;
+  if (lv && !lv._error && Array.isArray(lv.contracts) && lv.contracts.length) {
+    const market = lv.market_name || lv.symbol;
+    sections.push(`
+      <div style="margin:14px 0 6px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:500">Tradeable legs · ${lv.contracts.length} contracts</div>
+        <span class="chip">${lv.exchange || 'FORECASTX'} · payout $${lv.payout ?? '1.00'}</span>
+      </div>
+      <div id="leafChain" class="empty" style="padding:14px"><span class="skeleton" style="display:inline-block;width:200px;height:14px"></span> loading live quotes…</div>
+    `);
+    // Defer snapshot pull so the drawer paints first.
+    setTimeout(() => loadLeafQuotes(lv), 50);
+  } else if (lv?._error) {
+    sections.push(`<div style="margin:14px 0 4px;font-weight:500">Tradeable legs</div><div class="chip bad">${lv._error}</div>`);
+  }
+
+  // ───── Rules / info / schedule blocks ─────
+  // Headline rules from /forecast/contract/rules (singular conid form)
+  const rules = full.rules;
+  if (rules && !rules._error) {
+    const linkRow = rules.market_rules_link
+      ? `<div style="margin:10px 0"><a href="${rules.market_rules_link}" target="_blank" rel="noopener" class="btn btn-primary">📄 Operative Terms &amp; Conditions PDF</a></div>`
+      : '';
+    const dataLink = rules.data_and_resolution_link
+      ? `<div style="margin:6px 0"><a href="${rules.data_and_resolution_link}" target="_blank" rel="noopener" class="btn">🔗 Resolution data source (${rules.source_agency || 'official'})</a></div>` : '';
+    const fmtTs = ts => ts ? new Date(ts*1000).toUTCString() : '—';
+    sections.push(`
+      <div style="margin:14px 0 6px;font-weight:500;color:var(--ink)">Resolution rules</div>
+      ${linkRow}${dataLink}
+      <div class="kv" style="line-height:1.8">
+        <div><span class="k">market</span> <span class="v">${rules.market_name || '—'}</span></div>
+        <div><span class="k">description</span> <span class="v" style="white-space:normal">${rules.description || '—'}</span></div>
+        <div><span class="k">measured period</span> <span class="v">${rules.measured_period || '—'}</span></div>
+        <div><span class="k">threshold</span> <span class="v">${rules.threshold || '—'}</span></div>
+        <div><span class="k">source agency</span> <span class="v">${rules.source_agency || '—'}</span></div>
+        <div><span class="k">product code</span> <span class="v">${rules.product_code || '—'}</span></div>
+        <div><span class="k">payout</span> <span class="v">${rules.payout || '—'}</span></div>
+        <div><span class="k">price increment</span> <span class="v">${rules.price_increment || '—'}</span></div>
+        <div><span class="k">last trade</span> <span class="v">${fmtTs(rules.last_trade_time)}</span></div>
+        <div><span class="k">release</span> <span class="v">${fmtTs(rules.release_time)}</span></div>
+        <div><span class="k">payout time</span> <span class="v">${fmtTs(rules.payout_time)}</span></div>
+        <div><span class="k">timezone</span> <span class="v">${rules.exchange_timezone || '—'}</span></div>
+      </div>
+    `);
+  } else if (rules?._error) {
+    sections.push(`<div style="margin:14px 0 4px;font-weight:500">Resolution rules</div><div class="chip bad">${rules._error}</div>`);
+  }
+
+  // info-and-rules: trading hours + order types (more behavioural / order-engine info)
   const ir = full.info_and_rules;
   if (ir && !ir._error) {
-    const linkRow = ir.rules?.market_rules_link
-      ? `<div style="margin:10px 0"><a href="${ir.rules.market_rules_link}" target="_blank" rel="noopener" class="btn btn-primary">📄 Open Operative Terms &amp; Conditions PDF</a></div>`
-      : '';
+    const irRules = ir.rules || {};
     sections.push(`
-      <div style="margin:14px 0 4px;font-weight:500;color:var(--ink)">Contract info &amp; market rules</div>
-      ${linkRow}
-      ${block('— info', ir.info || ir).replace(/^<div[^>]*>[^<]*<\/div>/, '')}
-      ${ir.rules ? block('— rules', ir.rules).replace(/^<div[^>]*>[^<]*<\/div>/, '') : ''}
+      <div style="margin:14px 0 4px;font-weight:500">Trading rules (info-and-rules)</div>
+      <div class="kv" style="line-height:1.8">
+        <div><span class="k">instrument type</span> <span class="v">${ir.instrument_type || '—'}</span></div>
+        <div><span class="k">tick / increment</span> <span class="v">${irRules.increment ?? '—'} (${irRules.incrementDigits ?? '—'} dp)</span></div>
+        <div><span class="k">default size</span> <span class="v">${irRules.defaultSize ?? '—'}</span></div>
+        <div><span class="k">size increment</span> <span class="v">${irRules.sizeIncrement ?? '—'}</span></div>
+        <div><span class="k">tif types</span> <span class="v">${(irRules.tifTypes || []).join(', ') || '—'}</span></div>
+        <div><span class="k">order types</span> <span class="v">${(irRules.orderTypes || []).join(', ') || '—'}</span></div>
+        <div><span class="k">currency</span> <span class="v">${ir.currency || '—'}</span></div>
+        <div><span class="k">valid exchanges</span> <span class="v">${ir.valid_exchanges || '—'}</span></div>
+      </div>
     `);
   } else if (ir?._error) {
-    sections.push(`<div style="margin:14px 0 4px;font-weight:500">Contract info &amp; market rules</div><div class="chip bad">${ir._error}</div>`);
+    sections.push(`<div style="margin:14px 0 4px;font-weight:500">Trading rules</div><div class="chip bad">${ir._error}</div>`);
   }
+
   sections.push(block('Schedule', full.schedules));
+  if (full.details && !full.details._error) sections.push(block('Forecast details', full.details));
   sections.push(block('Security definition', full.secdef));
-  if (full.forecast_details) sections.push(block('Forecast details (legacy)', full.forecast_details));
-  if (full.forecast_details_prod) sections.push(block('Forecast details — parent', full.forecast_details_prod));
+
   const html = sections.filter(Boolean).join('');
   return html || '<div class="chip">No rules data returned for this contract.</div>';
+}
+
+/**
+ * Pull live snapshots for every leaf in the chain, then render a Yes/No grid by strike.
+ * IBKR's snapshot needs a warmup pass — we do two passes for reliability.
+ */
+async function loadLeafQuotes(leaves){
+  const conids = (leaves.contracts || []).map(c => c.conid).filter(Boolean);
+  if (!conids.length) return;
+  const fields = '84,85,86,87,88,7638,8393,8394,6509';
+  // chunk + 2 passes
+  async function pull(){
+    const all = [];
+    for (let i = 0; i < conids.length; i += 30){
+      const ch = conids.slice(i, i+30);
+      try {
+        const r = await API('/api/marketdata/snapshot?conids=' + ch.join(',') + '&fields=' + fields);
+        (Array.isArray(r) ? r : (r?.snapshots || [])).forEach(s => all.push(s));
+      } catch {}
+    }
+    return all;
+  }
+  await pull();
+  await new Promise(r => setTimeout(r, 1500));
+  const list = await pull();
+  const by = {}; list.forEach(s => { by[String(s.conid ?? s.conidEx)] = s; });
+  const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+
+  // Group leaves by strike_label so YES and NO sit side-by-side.
+  const groups = {};
+  (leaves.contracts || []).forEach(c => {
+    const k = `${c.strike_label}__${c.expiration}__${c.time_specifier}`;
+    if (!groups[k]) groups[k] = {label: c.strike_label, expiration: c.expiration, time_specifier: c.time_specifier, strike: c.strike};
+    const s = by[String(c.conid)] || {};
+    const leaf = {
+      conid: c.conid,
+      side: c.side,                // "Y" | "N"
+      bid: fp(s['84']), ask: fp(s['86']),
+      bidSize: fp(s['88']), askSize: fp(s['85']),
+      volume: fp(s['87']), oi: fp(s['7638']),
+      yesPct: fp(s['8393']), noPct: fp(s['8394']),
+      mdAvail: s['6509'],
+    };
+    groups[k][c.side === 'Y' ? 'yes' : 'no'] = leaf;
+  });
+
+  const sortedKeys = Object.keys(groups).sort((a,b) => (groups[a].strike ?? 0) - (groups[b].strike ?? 0));
+  const html = `
+    <table class="t" style="margin:-14px -14px;width:calc(100% + 28px)">
+      <thead><tr>
+        <th>Strike / outcome</th>
+        <th class="num">YES bid</th>
+        <th class="num">YES ask</th>
+        <th class="num">NO bid</th>
+        <th class="num">NO ask</th>
+        <th class="num">Vol</th>
+        <th class="num">OI</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${sortedKeys.map(k => {
+        const g = groups[k];
+        const y = g.yes || {}, n = g.no || {};
+        const fmt = v => v != null && !isNaN(v) ? Number(v).toFixed(3) : '—';
+        return `<tr>
+          <td><b>${g.label}</b><div style="font-size:10.5px;color:var(--muted)">exp ${g.expiration} · ${g.time_specifier}</div></td>
+          <td class="num delta-up">${fmt(y.bid)}</td>
+          <td class="num delta-up">${fmt(y.ask)}</td>
+          <td class="num delta-down">${fmt(n.bid)}</td>
+          <td class="num delta-down">${fmt(n.ask)}</td>
+          <td class="num">${y.volume ?? n.volume ?? '—'}</td>
+          <td class="num">${y.oi ?? n.oi ?? '—'}</td>
+          <td>
+            ${y.conid ? `<button class="btn btn-ghost" style="padding:3px 6px;font-size:11px" onclick="quickOrder(${y.conid},'BUY',${y.ask ?? 0.5})">Buy YES</button>` : ''}
+            ${n.conid ? `<button class="btn btn-ghost" style="padding:3px 6px;font-size:11px" onclick="quickOrder(${n.conid},'BUY',${n.ask ?? 0.5})">Buy NO</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  const wrap = document.getElementById('leafChain');
+  if (wrap) wrap.outerHTML = html;
+}
+
+async function quickOrder(conid, side, px){
+  if (!confirm(`Place paper ${side} on conid ${conid} @ ${Number(px).toFixed(3)} (qty 100)?`)) return;
+  const order = {acctId: CFG.accountId, conid, orderType: 'LMT', side, tif: 'DAY', quantity: 100, price: Number(px)};
+  try {
+    const r = await API('/api/orders/place', {method:'POST', body: JSON.stringify({orders:[order]})});
+    alert('order: ' + JSON.stringify(r));
+  } catch (e) { alert('error: ' + (e?.body?.detail || JSON.stringify(e))); }
 }
 function closeDrawer(){ document.getElementById('mask').classList.remove('open'); document.getElementById('drawer').classList.remove('open'); }
 document.getElementById('mask').addEventListener('click', closeDrawer);

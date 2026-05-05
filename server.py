@@ -502,13 +502,21 @@ async def forecast_categories():
 
 
 @app.get("/api/forecast/markets")
-async def forecast_markets(conid: str):
-    return await ibkr_get("/v1/api/forecast/contract/market", params={"conid": conid})
+async def forecast_markets(underlyingConid: str, exchange: str = "FORECASTX"):
+    """List leaf tradeable contracts under a parent forecast index.
+    Returns each strike × Y/N leg with its own conid, expiry, strike, and label.
+    This is the canonical drill-down — the /forecast/category/tree response
+    only contains parent indices."""
+    return await ibkr_get(
+        "/v1/api/forecast/contract/market",
+        params={"underlyingConid": underlyingConid, "exchange": exchange},
+    )
 
 
 @app.get("/api/forecast/details")
-async def forecast_details(conids: str):
-    return await ibkr_get("/v1/api/forecast/contract/details", params={"conids": conids})
+async def forecast_details(conid: str):
+    # IBKR's signature is singular conid=, not conids=
+    return await ibkr_get("/v1/api/forecast/contract/details", params={"conid": conid})
 
 
 @app.get("/api/forecast/rules")
@@ -538,15 +546,17 @@ async def forecast_full(conid: str, product_conid: str | None = None):
         except Exception as e:
             out[name] = {"_error": str(e)}
 
-    # Primary: the new combined endpoint John C. flagged.
+    # Primary: the combined info+rules endpoint
     await safe("info_and_rules", f"/v1/api/iserver/contract/{conid}/info-and-rules")
-    # Useful supplements.
-    await safe("secdef",         "/v1/api/iserver/secdef/info", {"conid": conid})
-    await safe("schedules",      "/v1/api/forecast/contract/schedules", {"conid": conid})
-    # Legacy fallbacks (often 500 on event contracts but sometimes useful).
-    await safe("forecast_details", "/v1/api/forecast/contract/details", {"conids": conid})
-    if product_conid:
-        await safe("forecast_details_prod", "/v1/api/forecast/contract/details", {"conids": product_conid})
+    # Forecast endpoints (singular `conid=` per Postman collection)
+    await safe("rules",       "/v1/api/forecast/contract/rules",     {"conid": conid})
+    await safe("schedules",   "/v1/api/forecast/contract/schedules", {"conid": conid})
+    await safe("details",     "/v1/api/forecast/contract/details",   {"conid": conid})
+    # Drill-down: enumerate leaf tradeable contracts under this parent (if it IS a parent)
+    await safe("leaves",      "/v1/api/forecast/contract/market",
+               {"underlyingConid": conid, "exchange": "FORECASTX"})
+    # Security definition (always handy)
+    await safe("secdef",      "/v1/api/iserver/secdef/info",         {"conid": conid})
     return out
 
 
