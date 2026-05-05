@@ -1058,8 +1058,11 @@ function renderMarkets(){
   const maxPx = parseFloat(document.getElementById('filterMaxPrice').value);
   const activeOnly = document.getElementById('filterActiveOnly')?.checked;
 
-  // Active = any of bid/ask/yes%/no%/volume returned by snapshot.
-  const isActive = m => (m._bid != null) || (m._ask != null) || (m._yesPct != null) || (m._noPct != null) || (m._volume != null);
+  // Active = either (a) parent itself has bid/ask/yes/no/vol, or (b) we drilled
+  // and got a representative leaf with prices.
+  const isActive = m => (m._bid != null) || (m._ask != null) || (m._yesPct != null)
+                     || (m._noPct != null) || (m._volume != null)
+                     || (m._bestLeaf && (m._bestLeaf.bid != null || m._bestLeaf.ask != null || m._bestLeaf.yesPct != null));
 
   const items = MARKETS.filter(m => {
     if (cat && String(m.categoryId || m.parentId || '') !== String(cat)) return false;
@@ -1104,11 +1107,19 @@ function renderMarkets(){
   if (PAGE_OFFSET > items.length) PAGE_OFFSET = 0;
   const slice = items.slice(0, PAGE_OFFSET + PAGE);
   grid.innerHTML = slice.map(m => {
-    const sp = (m._bid != null && m._ask != null) ? ((m._ask - m._bid)*100).toFixed(1) + 'c' : '—';
-    const yes = m._yesPct != null ? m._yesPct : (m._ask != null ? m._ask*100 : null);
-    const no  = m._noPct  != null ? m._noPct  : (m._bid != null ? (1-m._bid)*100 : null);
-    const vol = m._volume != null ? m._volume.toLocaleString() : '—';
-    const oi  = m._oi != null ? m._oi.toLocaleString() : '—';
+    // Best leaf snapshot (set by drillVisibleMarkets) takes precedence; fall back
+    // to the parent OI/vol that come back from the parent-level snapshot.
+    const lf = m._bestLeaf;
+    const yes = lf?.yesPct ?? (lf?.ask != null ? lf.ask*100 : null);
+    const no  = lf?.noPct  ?? (lf?.bid != null ? (1-lf.bid)*100 : null);
+    const oi  = (lf?.oi ?? m._oi);
+    const oiTxt  = oi != null ? Number(oi.toString().replace(/[KkMm]/, m => ({K:1e3,M:1e6}[m.toUpperCase()] || 1))).toLocaleString() : '—';
+    const vol = (lf?.volume ?? m._volume);
+    const volTxt = vol != null ? Number(vol.toString().replace(/[KkMm]/, m => ({K:1e3,M:1e6}[m.toUpperCase()] || 1))).toLocaleString() : '—';
+    const hasPrice = yes != null || no != null;
+    const hint = hasPrice
+      ? `<span style="font-size:10.5px;color:var(--muted)">${lf.legCount} legs · click to drill</span>`
+      : `<span style="font-size:10.5px;color:var(--muted);font-style:italic">click to load tradeable legs →</span>`;
     return `
     <div class="market" data-conid="${m.conid}" onclick="openMarket(${MARKETS.indexOf(m)})">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -1116,27 +1127,42 @@ function renderMarkets(){
         <span class="chip">conid ${m.conid || ''}</span>
       </div>
       <div class="title">${m.title || '(untitled)'}</div>
-      <div style="display:flex;gap:14px;margin:6px 0 10px">
-        <div style="flex:1">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">YES</div>
-          <div class="serif" style="font-size:26px;line-height:1;color:${yes!=null?'var(--green-deep)':'var(--muted)'}">${yes != null ? yes.toFixed(0)+'%' : '—'}</div>
-          <div style="font-size:10px;color:var(--muted)">bid ${m._bid?.toFixed?.(3) ?? '—'}</div>
-        </div>
-        <div style="flex:1">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">NO</div>
-          <div class="serif" style="font-size:26px;line-height:1;color:${no!=null?'var(--red)':'var(--muted)'}">${no != null ? no.toFixed(0)+'%' : '—'}</div>
-          <div style="font-size:10px;color:var(--muted)">ask ${m._ask?.toFixed?.(3) ?? '—'}</div>
-        </div>
-      </div>
+      ${hasPrice ? `
+        <div style="display:flex;gap:14px;margin:6px 0 4px">
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">YES</div>
+            <div class="serif" style="font-size:30px;line-height:1;color:var(--green-deep)">${yes != null ? yes.toFixed(0)+'%' : '—'}</div>
+            <div style="font-size:10px;color:var(--muted)">bid ${lf?.bid != null ? lf.bid.toFixed(3) : '—'} · ask ${lf?.ask != null ? lf.ask.toFixed(3) : '—'}</div>
+          </div>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">NO</div>
+            <div class="serif" style="font-size:30px;line-height:1;color:var(--red)">${no != null ? no.toFixed(0)+'%' : '—'}</div>
+            <div style="font-size:10px;color:var(--muted)">${lf?.legLabel || ''}</div>
+          </div>
+        </div>` : `
+        <div style="margin:8px 0">
+          <div style="display:flex;gap:24px">
+            <div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Open Interest</div>
+                 <div class="serif" style="font-size:26px;line-height:1">${oiTxt}</div></div>
+            <div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Volume</div>
+                 <div class="serif" style="font-size:26px;line-height:1">${volTxt}</div></div>
+          </div>
+        </div>`}
       <div class="meta">
-        <span>spread ${sp} · vol ${vol}</span>
-        <span>OI ${oi}</span>
+        <span>${m.symbol || m.exchange || 'FORECASTX'}</span>
+        ${hint}
       </div>
     </div>`;
   }).join('');
 
-  // Subscribe to live quotes for visible cards (best-effort; gated by IBKR market data subscription)
+  // Subscribe to live quotes for visible cards (best-effort)
   try { subscribeMarkets(slice.map(m => m.conid).filter(Boolean)); } catch (e) {}
+
+  // Auto-drill the visible parents to fetch their best leaf and show real Yes/No %.
+  // Skip ones we've already drilled (cached on the market object).
+  const toDrill = slice.filter(m => !m._bestLeaf && !m._drilling).slice(0, 30);
+  toDrill.forEach(m => { m._drilling = true; });
+  drillVisibleMarkets(toDrill);
 
   // Pagination controls
   if (items.length > slice.length) {
@@ -1405,6 +1431,75 @@ async function placeFromDrawer(conid, whatIf){
     const r = await API(url, {method:'POST', body: JSON.stringify({orders: [order]})});
     out.innerText = JSON.stringify(r, null, 2);
   } catch (e) { out.innerText = JSON.stringify(e, null, 2); }
+}
+
+/* ============ auto-drill parents to pull leaf prices ============ */
+async function drillVisibleMarkets(parents){
+  if (!parents?.length) return;
+  // Step 1 — get the leaf chain per parent. Stagger to be polite.
+  const leavesByParent = {};
+  for (const p of parents){
+    try {
+      const r = await API('/api/forecast/markets?underlyingConid=' + p.conid + '&exchange=FORECASTX');
+      leavesByParent[p.conid] = r;
+    } catch { leavesByParent[p.conid] = null; }
+  }
+  // Step 2 — collect every leaf conid across these parents and snapshot in one pass.
+  const allLeafConids = [];
+  Object.values(leavesByParent).forEach(r => (r?.contracts || []).forEach(c => allLeafConids.push(c.conid)));
+  if (!allLeafConids.length) {
+    parents.forEach(p => p._drilling = false);
+    return;
+  }
+  const fields = '84,85,86,87,88,7638,8393,8394,6509';
+  async function snapPass(){
+    const out = [];
+    for (let i = 0; i < allLeafConids.length; i += 30){
+      const ch = allLeafConids.slice(i, i+30);
+      try {
+        const s = await API('/api/marketdata/snapshot?conids=' + ch.join(',') + '&fields=' + fields);
+        (Array.isArray(s) ? s : (s?.snapshots || [])).forEach(x => out.push(x));
+      } catch {}
+    }
+    return out;
+  }
+  await snapPass();                                  // warmup
+  await new Promise(r => setTimeout(r, 1500));
+  const snaps = await snapPass();                    // real values
+  const by = {}; snaps.forEach(s => { by[String(s.conid ?? s.conidEx)] = s; });
+
+  // Step 3 — pick a representative leaf per parent (largest size visible) and stash on market.
+  const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+  parents.forEach(p => {
+    const list = leavesByParent[p.conid]?.contracts || [];
+    if (!list.length) { p._drilling = false; return; }
+    let best = null, bestScore = -1;
+    list.forEach(c => {
+      if (c.side !== 'Y') return;                    // YES side carries the headline price
+      const s = by[String(c.conid)] || {};
+      const ask = fp(s['86']);
+      const sizes = (fp(s['85']) || 0) + (fp(s['88']) || 0);
+      const score = (ask != null ? 1000 : 0) + sizes;
+      if (score > bestScore){
+        bestScore = score;
+        best = {
+          conid:    c.conid,
+          legLabel: c.strike_label,
+          legCount: list.length,
+          bid:      fp(s['84']),
+          ask:      fp(s['86']),
+          yesPct:   fp(s['8393']),
+          noPct:    fp(s['8394']),
+          volume:   fp(s['87']),
+          oi:       fp(s['7638']),
+        };
+      }
+    });
+    if (best) p._bestLeaf = best;
+    p._drilling = false;
+  });
+  // Re-render the cards now that we have prices.
+  renderMarkets();
 }
 
 /* ============ WebSocket live quotes ============ */
