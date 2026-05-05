@@ -560,6 +560,117 @@ async def forecast_full(conid: str, product_conid: str | None = None):
     return out
 
 
+@app.get("/api/forecast/bulk-drill")
+async def forecast_bulk_drill(
+    parents: str,
+    exchange: str = "FORECASTX",
+    fields: str = "84,85,86,87,88,7638,8393,8394,6509",
+    concurrency: int = 8,
+):
+    """Drill many parent forecast events at once and return their tradeable legs
+    with current snapshots. Single round-trip from the browser instead of 1k.
+
+    `parents` is a comma-separated list of underlying parent conids.
+    Returns: { events: { "<parentConid>": { legs: [{conid, strikeLabel, side, bid, ask, askSize, bidSize, volume, oi, yesPct, noPct}] } } }
+    """
+    parent_ids = [p.strip() for p in parents.split(",") if p.strip()]
+    if not parent_ids:
+        return {"events": {}}
+
+    sem = asyncio.Semaphore(max(1, min(concurrency, 16)))
+
+    async def fetch_legs(pid: str):
+        async with sem:
+            try:
+                r = await ibkr_get(
+                    "/v1/api/forecast/contract/market",
+                    params={"underlyingConid": pid, "exchange": exchange},
+                )
+                return pid, (r or {}).get("contracts", []) or []
+            except Exception:
+                return pid, []
+
+    leg_results = await asyncio.gather(*[fetch_legs(pid) for pid in parent_ids])
+
+    # Collect every YES-side leg conid; that's what carries the headline price.
+    yes_legs: dict[str, list[dict]] = {}
+    all_conids: list[str] = []
+    for pid, contracts in leg_results:
+        legs = []
+        for c in contracts:
+            if c.get("side") != "Y":
+                continue
+            legs.append({
+                "conid": c.get("conid"),
+                "strikeLabel": c.get("strike_label") or c.get("strike") or "",
+                "side": c.get("side"),
+            })
+            if c.get("conid") is not None:
+                all_conids.append(str(c["conid"]))
+        yes_legs[pid] = legs
+
+    # Snapshot warmup + real pull in chunks of 30.
+    async def snap_pass():
+        out: dict[str, dict] = {}
+        for i in range(0, len(all_conids), 30):
+            chunk = all_conids[i : i + 30]
+            try:
+                r = await ibkr_get(
+                    "/v1/api/iserver/marketdata/snapshot",
+                    params={"conids": ",".join(chunk), "fields": fields},
+                )
+                items = r if isinstance(r, list) else (r or {}).get("snapshots", []) or []
+                for s in items:
+                    cid = s.get("conid") if isinstance(s, dict) else None
+                    if cid is None and isinstance(s, dict):
+                        cid = s.get("conidEx")
+                    if cid is not None:
+                        out[str(cid)] = s
+            except Exception:
+                continue
+        return out
+
+    if all_conids:
+        await snap_pass()                # warmup
+        await asyncio.sleep(1.5)
+        snap_by_conid = await snap_pass()
+    else:
+        snap_by_conid = {}
+
+    def fp(v):
+        try:
+            if v is None:
+                return None
+            n = float(v)
+            if n != n:  # NaN
+                return None
+            return n
+        except (ValueError, TypeError):
+            return None
+
+    events: dict[str, dict] = {}
+    for pid, legs in yes_legs.items():
+        out_legs = []
+        for l in legs:
+            s = snap_by_conid.get(str(l["conid"]), {}) or {}
+            out_legs.append({
+                "conid":       l["conid"],
+                "strikeLabel": l["strikeLabel"],
+                "side":        l["side"],
+                "bid":         fp(s.get("84")),
+                "ask":         fp(s.get("86")),
+                "askSize":     fp(s.get("85")),
+                "bidSize":     fp(s.get("88")),
+                "volume":      fp(s.get("87")),
+                "oi":          fp(s.get("7638")),
+                "yesPct":      fp(s.get("8393")),
+                "noPct":       fp(s.get("8394")),
+                "mdAvail":     s.get("6509"),
+            })
+        events[pid] = {"legs": out_legs}
+    return {"events": events}
+
+
 # ─── market data ───
 @app.get("/api/marketdata/snapshot")
 async def md_snapshot(conids: str, fields: str = "84,85,86,87,88,7638,8393,8394,6509"):
