@@ -614,7 +614,10 @@ if (ROOT / "assets").exists():
 
 
 if __name__ == "__main__":
-    host = os.getenv("HOST", "127.0.0.1")
+    # Bind to 0.0.0.0 whenever PORT is set (Render, Fly, Railway, Heroku all set it).
+    # Locally we keep 127.0.0.1 so the server isn't on the LAN by default.
+    in_cloud = bool(os.getenv("PORT"))
+    host = os.getenv("HOST") or ("0.0.0.0" if in_cloud else "127.0.0.1")
     port = int(os.getenv("PORT", "8787"))
-    print(f"TradeFox Strategy Lab → http://{host}:{port}")
+    print(f"TradeFox Strategy Lab → http://{host}:{port}  (cloud={in_cloud})")
     uvicorn.run(app, host=host, port=port, log_level="info")
