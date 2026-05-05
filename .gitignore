@@ -1,0 +1,21 @@
+# secrets — never commit
+config.json
+*.pem
+*.key
+.env
+.env.*
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# logs
+*.log

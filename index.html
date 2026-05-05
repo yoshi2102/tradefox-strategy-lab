@@ -1,0 +1,1298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>TradeFox — IBKR Strategy Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F4EE;
+    --bg-2: #EFEAE0;
+    --surface: #FFFFFF;
+    --surface-2: #FBF9F4;
+    --ink: #0E0F0C;
+    --ink-2: #2B2D29;
+    --muted: #6E6F6A;
+    --line: #E6E1D6;
+    --line-2: #D9D3C4;
+    --green: #9FE870;
+    --green-deep: #163300;
+    --green-soft: #DEF2C7;
+    --red: #E45858;
+    --red-soft: #FBE3E1;
+    --amber: #F2B33D;
+    --blue: #6B9CE8;
+    --blue-soft: #E5EEFA;
+    --shadow-sm: 0 1px 2px rgba(22,51,0,.04), 0 1px 1px rgba(22,51,0,.03);
+    --shadow: 0 4px 16px rgba(22,51,0,.06), 0 1px 2px rgba(22,51,0,.04);
+    --radius: 14px;
+    --radius-sm: 10px;
+    --radius-lg: 22px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+    font-size: 14px; line-height: 1.45;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    letter-spacing: -0.005em;
+  }
+  .serif { font-family: 'Instrument Serif', 'Times New Roman', serif; font-weight: 400; letter-spacing: -0.01em; }
+  .mono  { font-family: 'Geist Mono', ui-monospace, monospace; font-feature-settings: "tnum"; }
+
+  .shell { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+  .side { background: var(--bg); border-right: 1px solid var(--line); padding: 22px 16px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 22px; }
+  .brand-mark { width: 32px; height: 32px; border-radius: 9px; background: var(--green-deep); display: grid; place-items: center; color: var(--green); font-family: 'Instrument Serif', serif; font-size: 22px; line-height: 1; }
+  .brand-name { font-family: 'Instrument Serif', serif; font-size: 22px; line-height: 1; }
+  .brand-sub  { font-size: 11px; color: var(--muted); margin-top: 2px; letter-spacing: 0.02em; }
+
+  .nav-group { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 14px 10px 6px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 1px 0; border-radius: 10px; cursor: pointer; color: var(--ink-2); user-select: none; }
+  .nav-item:hover { background: var(--bg-2); }
+  .nav-item.active { background: var(--ink); color: #fff; }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .nav-item.active .dot { background: var(--green); }
+
+  .side-foot { margin-top: auto; border-top: 1px solid var(--line); padding-top: 14px; }
+  .session-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .session-head { display: flex; justify-content: space-between; align-items: center; }
+  .session-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .pulse { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+  .pulse .led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pulse.live .led { background: var(--green); box-shadow: 0 0 0 4px rgba(159,232,112,.25); animation: pulse 2s infinite; }
+  .pulse.dead .led { background: var(--red); }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 4px rgba(159,232,112,.25);} 50% {box-shadow: 0 0 0 6px rgba(159,232,112,.05);} }
+  .session-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 10px; }
+  .session-meta div { font-size: 11px; color: var(--muted); }
+  .session-meta b { display: block; color: var(--ink); font-weight: 500; font-size: 12px; }
+
+  .topbar { position: sticky; top: 0; z-index: 20; backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px); background: rgba(247,244,238,.78); border-bottom: 1px solid var(--line); padding: 14px 32px; display: flex; align-items: center; gap: 16px; justify-content: space-between; }
+  .crumbs { font-size: 13px; color: var(--muted); }
+  .crumbs b { color: var(--ink); font-weight: 500; }
+  .topbar-r { display: flex; align-items: center; gap: 10px; }
+  .search { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; display: flex; align-items: center; gap: 8px; width: 280px; }
+  .search input { border: 0; outline: 0; background: transparent; font: inherit; width: 100%; color: var(--ink); }
+  .search .kbd { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
+
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 7px 12px; font: inherit; cursor: pointer; color: var(--ink); transition: transform .08s ease, background .12s ease, border-color .12s ease; }
+  .btn:hover { background: var(--surface-2); }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--green); border-color: var(--green); color: var(--green-deep); font-weight: 500; }
+  .btn-primary:hover { background: #B0F087; }
+  .btn-dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn-dark:hover { background: #1a1c18; }
+  .btn-ghost { background: transparent; border-color: transparent; }
+  .btn-danger { background: var(--red-soft); border-color: var(--red-soft); color: #8A2A2A; }
+
+  .page { padding: 28px 32px 80px; max-width: 1480px; }
+
+  .hero { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 18px; }
+  .hero-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 24px; box-shadow: var(--shadow-sm); }
+  .hero-equity { background: linear-gradient(135deg, var(--green-deep) 0%, #0a1f00 100%); color: #ECF7DD; border: 0; position: relative; overflow: hidden; }
+  .hero-equity::after { content: ""; position: absolute; right: -40px; bottom: -40px; width: 220px; height: 220px; border-radius: 50%; background: radial-gradient(circle, rgba(159,232,112,.30), transparent 70%); }
+  .hero-equity .label { color: rgba(236,247,221,.7); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .hero-equity .big { font-family: 'Instrument Serif', serif; font-size: 64px; line-height: 1.05; margin: 6px 0 4px; letter-spacing: -0.02em; }
+  .hero-equity .delta { display: inline-flex; align-items: center; gap: 6px; background: rgba(159,232,112,.18); color: var(--green); padding: 4px 10px; border-radius: 999px; font-size: 12px; }
+  .hero-equity .row { display: flex; gap: 28px; margin-top: 24px; flex-wrap: wrap; }
+  .hero-equity .row .label { font-size: 10.5px; }
+  .hero-equity .row .v { font-size: 18px; margin-top: 2px; font-family: 'Instrument Serif', serif; }
+
+  .stat { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat .v { font-family: 'Instrument Serif', serif; font-size: 30px; line-height: 1.1; margin-top: 4px; }
+  .stat .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .grid-12 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-sm); }
+  .card.flush { padding: 0; overflow: hidden; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .card-head h3 { margin: 0; font-family: 'Instrument Serif', serif; font-size: 22px; font-weight: 400; letter-spacing: -0.01em; }
+  .card-head .sub { font-size: 12px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 11px; background: var(--bg-2); color: var(--ink-2); border: 1px solid var(--line); }
+  .chip.ok    { background: var(--green-soft); border-color: #C5E5A4; color: var(--green-deep); }
+  .chip.warn  { background: #FCE8C7; border-color: #F0CF8E; color: #6E4D11; }
+  .chip.bad   { background: var(--red-soft); border-color: #F2C0BC; color: #7A2722; }
+  .chip.info  { background: var(--blue-soft); border-color: #C9D8EE; color: #20416F; }
+
+  table.t { width: 100%; border-collapse: collapse; }
+  table.t th, table.t td { padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13px; }
+  table.t th { font-weight: 500; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; background: var(--surface-2); }
+  table.t tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-feature-settings: "tnum"; font-family: 'Geist Mono', monospace; font-size: 12.5px; }
+  .delta-up { color: var(--green-deep); }
+  .delta-down { color: var(--red); }
+
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); padding: 10px; border-radius: 14px; margin-bottom: 14px; align-items: center; }
+  .filters select, .filters input[type=text], .filters input[type=number] { border: 1px solid var(--line); background: var(--surface-2); border-radius: 9px; padding: 6px 10px; font: inherit; color: var(--ink); }
+
+  .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .market { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; transition: border-color .15s ease, transform .08s ease; cursor: pointer; }
+  .market:hover { border-color: var(--line-2); transform: translateY(-1px); box-shadow: var(--shadow); }
+  .market .cat { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .market .title { font-family: 'Instrument Serif', serif; font-size: 19px; line-height: 1.2; margin: 8px 0 12px; min-height: 46px; }
+  .market .px-row { display: flex; gap: 8px; align-items: baseline; }
+  .market .yes { background: var(--green-soft); color: var(--green-deep); padding: 2px 8px; border-radius: 6px; font-size: 11px; }
+  .market .price { font-family: 'Instrument Serif', serif; font-size: 30px; }
+  .market .meta { display: flex; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+
+  .strat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .strat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; position: relative; overflow: hidden; transition: border-color .15s ease; }
+  .strat:hover { border-color: var(--line-2); }
+  .strat .num { position: absolute; right: 16px; top: 12px; font-family: 'Instrument Serif', serif; font-size: 44px; color: var(--bg-2); line-height: 1; }
+  .strat .name { font-family: 'Instrument Serif', serif; font-size: 22px; margin: 0 0 6px; }
+  .strat .desc { font-size: 12.5px; color: var(--muted); min-height: 60px; }
+  .strat .actions { display: flex; gap: 8px; margin-top: 14px; }
+
+  .form-row { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .form-row:last-child { border-bottom: 0; }
+  .form-row label { font-size: 12.5px; color: var(--ink-2); }
+  .form-row .hint { font-size: 11px; color: var(--muted); }
+  .input, select.input, textarea.input { width: 100%; border: 1px solid var(--line); background: var(--surface-2); border-radius: 9px; padding: 8px 10px; font: inherit; color: var(--ink); }
+
+  .flow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+  .flow .step { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; position: relative; }
+  .flow .step .n { font-family: 'Instrument Serif', serif; font-size: 22px; color: var(--green-deep); }
+  .flow .step .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .flow .step.done { background: var(--green-soft); border-color: #C5E5A4; }
+  .flow .step.done::after { content: "✓"; position: absolute; right: 10px; top: 8px; color: var(--green-deep); font-weight: 700; }
+  .flow .step.active { border-color: var(--ink); }
+  .flow .step.pending { opacity: .55; }
+
+  pre.code { background: var(--ink); color: #ECF7DD; padding: 16px; border-radius: 12px; font-family: 'Geist Mono', monospace; font-size: 12px; line-height: 1.6; overflow-x: auto; margin: 0; }
+  .kv { font-family: 'Geist Mono', monospace; font-size: 12px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { color: var(--ink); }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .tabs { display: flex; gap: 4px; padding: 4px; background: var(--bg-2); border-radius: 12px; width: fit-content; }
+  .tab { padding: 6px 12px; border-radius: 9px; cursor: pointer; font-size: 13px; color: var(--muted); }
+  .tab.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+
+  .drawer-mask { position: fixed; inset: 0; background: rgba(14,15,12,.32); display: none; z-index: 50; }
+  .drawer-mask.open { display: block; }
+  .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 540px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .26s cubic-bezier(.2,.7,.2,1); z-index: 60; padding: 24px 26px; overflow-y: auto; }
+  .drawer.open { transform: translateX(0); }
+  .drawer .close { position: absolute; right: 18px; top: 16px; }
+
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+  .empty h4 { margin: 0 0 6px; font-family: 'Instrument Serif', serif; font-size: 22px; color: var(--ink); }
+  .empty p { margin: 0 0 12px; font-size: 13px; max-width: 480px; margin-left: auto; margin-right: auto; }
+
+  .alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); margin-bottom: 8px; font-size: 12.5px; }
+  .alert .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; background: var(--muted); }
+  .alert.warn { background: #FCF4E2; border-color: #F0DDB0; }
+  .alert.warn .dot { background: var(--amber); }
+  .alert.ok { background: var(--green-soft); border-color: #C5E5A4; }
+  .alert.ok .dot { background: var(--green-deep); }
+  .alert.bad { background: var(--red-soft); border-color: #F2C0BC; }
+  .alert.bad .dot { background: var(--red); }
+  .alert.info { background: var(--blue-soft); border-color: #C9D8EE; }
+  .alert.info .dot { background: var(--blue); }
+
+  .toggle { width: 36px; height: 20px; border-radius: 999px; background: var(--bg-2); position: relative; cursor: pointer; transition: background .15s; }
+  .toggle::after { content: ""; width: 16px; height: 16px; background: #fff; border-radius: 50%; position: absolute; top: 2px; left: 2px; transition: left .15s; box-shadow: var(--shadow-sm); }
+  .toggle.on { background: var(--green-deep); }
+  .toggle.on::after { left: 18px; }
+
+  .kill { background: linear-gradient(180deg, #FBE3E1 0%, #F7CFCB 100%); border: 1px solid #E9B6B1; border-radius: 14px; padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+  .kill h4 { margin: 0; font-family: 'Instrument Serif', serif; font-size: 22px; color: #6E1B16; }
+  .kill p { margin: 2px 0 0; color: #8A2A2A; font-size: 12px; }
+  .btn-kill { background: #B91C1C; color: #fff; border: 0; padding: 9px 16px; border-radius: 10px; cursor: pointer; font: inherit; font-weight: 500; }
+
+  .skeleton { background: linear-gradient(90deg, var(--bg-2) 0%, var(--surface) 50%, var(--bg-2) 100%); background-size: 200% 100%; animation: sk 1.4s infinite; border-radius: 8px; height: 14px; }
+  @keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+  .footnote { color: var(--muted); font-size: 11px; margin-top: 18px; }
+
+  @media (max-width: 1100px) {
+    .shell { grid-template-columns: 72px 1fr; }
+    .brand-name, .brand-sub, .nav-group, .session-card, .nav-item .lbl { display: none; }
+    .nav-item { justify-content: center; }
+    .grid-12, .grid-2, .hero { grid-template-columns: 1fr; }
+    .market-grid, .strat-grid, .grid-3 { grid-template-columns: 1fr 1fr; }
+    .form-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="drawer-mask" id="mask"></div>
+<aside class="drawer" id="drawer">
+  <button class="btn btn-ghost close" onclick="closeDrawer()">✕</button>
+  <div id="drawerBody"></div>
+</aside>
+
+<div class="shell">
+  <nav class="side">
+    <div class="brand">
+      <div class="brand-mark">f</div>
+      <div>
+        <div class="brand-name">tradefox</div>
+        <div class="brand-sub">IBKR Strategy Lab</div>
+      </div>
+    </div>
+
+    <div class="nav-group">Research</div>
+    <div class="nav-item active" data-view="dashboard"><span class="dot"></span><span class="lbl">Dashboard</span></div>
+    <div class="nav-item" data-view="markets"><span class="dot"></span><span class="lbl">Markets</span></div>
+    <div class="nav-item" data-view="strategies"><span class="dot"></span><span class="lbl">Strategies</span></div>
+    <div class="nav-item" data-view="backtest"><span class="dot"></span><span class="lbl">Backtests</span></div>
+
+    <div class="nav-group">Live</div>
+    <div class="nav-item" data-view="paper"><span class="dot"></span><span class="lbl">Paper Trading</span></div>
+    <div class="nav-item" data-view="positions"><span class="dot"></span><span class="lbl">Positions &amp; Orders</span></div>
+    <div class="nav-item" data-view="risk"><span class="dot"></span><span class="lbl">Risk</span></div>
+
+    <div class="nav-group">System</div>
+    <div class="nav-item" data-view="connection"><span class="dot"></span><span class="lbl">IBKR Connection</span></div>
+    <div class="nav-item" data-view="data"><span class="dot"></span><span class="lbl">Data Engine</span></div>
+
+    <div class="side-foot">
+      <div class="session-card" id="sessionCard">
+        <div class="session-head">
+          <span class="session-title">Session</span>
+          <span class="pulse dead" id="pulse"><span class="led"></span> <span id="pulseText">Disconnected</span></span>
+        </div>
+        <div class="session-meta">
+          <div>Account<b id="sAcct">—</b></div>
+          <div>User<b id="sUser">—</b></div>
+          <div>Env<b>Paper</b></div>
+          <div>Tickle<b id="sTickle">—</b></div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="crumbs"><span>TradeFox</span> · <b id="crumb">Dashboard</b></div>
+      <div class="topbar-r">
+        <div class="search">
+          <span style="color:var(--muted)">⌕</span>
+          <input id="searchBox" placeholder="Search markets, conids…" />
+          <span class="kbd">⌘K</span>
+        </div>
+        <button class="btn" id="btnRefresh" title="Refresh">↻ Refresh</button>
+        <button class="btn btn-primary" id="btnConnectTop">Connect to IBKR</button>
+      </div>
+    </div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section class="page view active" id="view-dashboard">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:48px;line-height:1">TradeFox Strategy Lab</h1>
+          <p style="margin:6px 0 0;color:var(--muted)" id="subtitle">Connect to IBKR (paper) to populate this dashboard with live account data.</p>
+        </div>
+      </div>
+
+      <div id="connectBanner" class="card" style="margin-bottom:16px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
+          <div>
+            <h3 class="serif" style="margin:0 0 4px;font-size:22px">Not connected to IBKR.</h3>
+            <p style="margin:0;color:var(--muted);font-size:13px">Open <b>IBKR Connection</b> to enter your credentials and run the OAuth 2.0 → SSO → tickle → /ssodh/init flow. Until then, every panel below is empty.</p>
+          </div>
+          <button class="btn btn-primary" onclick="navigate('connection')">Set up connection</button>
+        </div>
+      </div>
+
+      <div class="hero">
+        <div class="hero-card hero-equity">
+          <div class="label">Paper equity · <span id="heroAcct">—</span></div>
+          <div class="big mono" id="heroEquity">—</div>
+          <span class="delta" id="heroDelta">connect to populate</span>
+          <div class="row">
+            <div><div class="label">Realized PnL</div><div class="v" id="heroRealized">—</div></div>
+            <div><div class="label">Unrealized</div><div class="v" id="heroUnrealized">—</div></div>
+            <div><div class="label">Buying power</div><div class="v" id="heroBP">—</div></div>
+            <div><div class="label">Open positions</div><div class="v" id="heroPos">—</div></div>
+          </div>
+        </div>
+        <div>
+          <div class="grid-2" style="gap:12px;margin-bottom:12px">
+            <div class="stat"><div class="label">Net liquidation</div><div class="v" id="kpiNetLiq">—</div><div class="sub">/portfolio/{id}/summary</div></div>
+            <div class="stat"><div class="label">Cash</div><div class="v" id="kpiCash">—</div><div class="sub">availablefunds-c</div></div>
+          </div>
+          <div class="grid-2" style="gap:12px">
+            <div class="stat"><div class="label">Excess liquidity</div><div class="v" id="kpiExcess">—</div><div class="sub">excessliquidity-c</div></div>
+            <div class="stat"><div class="label">Maintenance margin</div><div class="v" id="kpiMaint">—</div><div class="sub">maintmarginreq-c</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-12" style="margin-bottom:16px">
+        <div class="card flush">
+          <div class="card-head">
+            <div>
+              <h3>Open positions</h3>
+              <div class="sub">Live · /v1/api/portfolio/{accountId}/positions/0</div>
+            </div>
+            <button class="btn" onclick="loadPositions()">Refresh</button>
+          </div>
+          <div id="dashPositions" class="empty">
+            <h4>Nothing yet.</h4>
+            <p>After you connect, your IBKR paper positions appear here in real time.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="serif" style="margin:0 0 8px;font-size:22px">Strategy leaderboard</h3>
+          <p style="margin:0 0 8px;color:var(--muted);font-size:12.5px">Computed locally once strategies have run. No fabricated metrics.</p>
+          <div class="empty" id="dashLeaderboard">
+            <h4>No runs yet.</h4>
+            <p>Configure a strategy template, run a backtest against ingested IBKR data, and the leaderboard populates from real PnL.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card flush">
+        <div class="card-head">
+          <div>
+            <h3>Recent paper trades</h3>
+            <div class="sub">Live · /v1/api/iserver/account/trades</div>
+          </div>
+          <button class="btn" onclick="loadTrades()">Refresh</button>
+        </div>
+        <div id="dashTrades" class="empty">
+          <h4>No trades yet.</h4>
+          <p>Place a paper order from the Markets drawer, or run a paper-trading strategy. Fills land here.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MARKETS ============ -->
+    <section class="page view" id="view-markets">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:40px;line-height:1.05">Market explorer</h1>
+          <p style="margin:6px 0 0;color:var(--muted)">IBKR ForecastEx event contracts · live snapshots from <span class="mono">/iserver/marketdata/snapshot</span></p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="loadCategories()">↓ Reload categories</button>
+        </div>
+      </div>
+
+      <div class="filters">
+        <select id="filterCat"><option value="">All categories</option></select>
+        <input type="text" id="filterText" placeholder="Title contains…" style="width:220px">
+        <input type="number" id="filterMaxSpread" placeholder="Max spread (c)" style="width:140px">
+        <input type="number" id="filterMinPrice" placeholder="Min YES price" step="0.01" style="width:140px">
+        <input type="number" id="filterMaxPrice" placeholder="Max YES price" step="0.01" style="width:140px">
+        <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-2);cursor:pointer"><input type="checkbox" id="filterActiveOnly" checked> Active only</label>
+        <button class="btn btn-primary" onclick="renderMarkets()">Apply filters</button>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)" id="marketCount"></span>
+      </div>
+
+      <div id="marketGrid" class="market-grid"></div>
+
+      <div id="marketsEmpty" class="card empty" style="display:none">
+        <h4>No event contracts loaded.</h4>
+        <p>Connect to IBKR and click <b>Reload categories</b>. The app calls <span class="mono">/forecast/category/tree</span>, walks each category, then fetches snapshot data per conid.</p>
+      </div>
+    </section>
+
+    <!-- ============ STRATEGIES ============ -->
+    <section class="page view" id="view-strategies">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:40px;line-height:1.05">Strategy templates</h1>
+          <p style="margin:6px 0 0;color:var(--muted)">Polymarket / Kalshi archetypes ported to IBKR. Templates are user-defined; metrics populate after a real backtest run.</p>
+        </div>
+      </div>
+      <div class="strat-grid" id="stratGrid"></div>
+    </section>
+
+    <!-- ============ BACKTEST ============ -->
+    <section class="page view" id="view-backtest">
+      <h1 class="serif" style="margin:0 0 6px;font-size:40px;line-height:1.05">Backtests</h1>
+      <p style="margin:0 0 16px;color:var(--muted)">Quote-level replay over IBKR historical data (<span class="mono">/iserver/marketdata/history</span>). The backtest engine itself is the next build step — this page exposes the data we have ingested.</p>
+
+      <div class="card" style="margin-bottom:14px">
+        <h3 class="serif" style="margin:0 0 10px;font-size:22px">Pull historical bars</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input class="input" id="histConid" placeholder="conid (e.g. 742019)" style="width:200px">
+          <select class="input" id="histPeriod" style="width:140px"><option>1d</option><option>5d</option><option>1w</option><option>1m</option><option>3m</option><option selected>6m</option><option>1y</option></select>
+          <select class="input" id="histBar" style="width:140px"><option>1min</option><option>5min</option><option>15min</option><option>1h</option><option selected>1d</option></select>
+          <button class="btn btn-dark" onclick="loadHistory()">Fetch</button>
+          <span style="font-size:12px;color:var(--muted)" id="histMeta"></span>
+        </div>
+        <svg id="histChart" viewBox="0 0 720 220" preserveAspectRatio="none" style="width:100%;height:220px;display:block;margin-top:14px"></svg>
+        <div id="histEmpty" class="empty" style="padding-top:0">
+          <p>Enter a conid to pull real OHLCV from IBKR. Try one from the Markets page.</p>
+        </div>
+      </div>
+
+      <div class="card empty">
+        <h4>Backtest engine not yet running.</h4>
+        <p>The next milestone: an event-driven engine that replays the bars/snapshots above against a strategy template, with conservative fill assumptions (buys at ask + slip, sells at bid − slip), fees, and partial-fill handling. Until that ships, this page does not display any results.</p>
+      </div>
+    </section>
+
+    <!-- ============ PAPER TRADING ============ -->
+    <section class="page view" id="view-paper">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:40px;line-height:1.05">Paper trading</h1>
+          <p style="margin:6px 0 0;color:var(--muted)">Live IBKR paper orders via <span class="mono">/iserver/account/{id}/orders</span></p>
+        </div>
+        <div class="kill" style="min-width: 380px">
+          <div>
+            <h4>Global kill switch</h4>
+            <p>Cancels all open IBKR orders on this account.</p>
+          </div>
+          <button class="btn-kill" onclick="cancelAllOrders()">⏻ KILL</button>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:14px">
+        <div class="card">
+          <h3 class="serif" style="margin:0 0 8px;font-size:22px">Session health</h3>
+          <div class="kv" id="sessionHealth" style="line-height:1.9">
+            <div><span class="k">status</span> <span class="v">disconnected</span></div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px">
+            <button class="btn" onclick="tickleNow()">Tickle now</button>
+            <button class="btn btn-dark" onclick="connect()">(Re)connect</button>
+            <button class="btn btn-ghost" onclick="disconnect()">Logout</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="serif" style="margin:0 0 8px;font-size:22px">Place a paper order</h3>
+          <div class="form-row"><label>conid</label><input class="input" id="ordConid" placeholder="e.g. 742019"></div>
+          <div class="form-row"><label>Side</label>
+            <select class="input" id="ordSide"><option>BUY</option><option>SELL</option></select></div>
+          <div class="form-row"><label>Order type</label>
+            <select class="input" id="ordType"><option value="LMT">LMT</option><option value="MKT">MKT</option></select></div>
+          <div class="form-row"><label>Limit price</label><input class="input" id="ordPx" type="number" step="0.001" placeholder="0.913"></div>
+          <div class="form-row"><label>Quantity</label><input class="input" id="ordQty" type="number" placeholder="100"></div>
+          <div class="form-row"><label>TIF</label>
+            <select class="input" id="ordTif"><option>DAY</option><option>GTC</option><option>IOC</option></select></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn" onclick="placeOrder(true)">What-if</button>
+            <button class="btn btn-primary" onclick="placeOrder(false)">Submit</button>
+          </div>
+          <div id="orderResult" class="kv" style="margin-top:10px;line-height:1.7;font-size:11.5px;color:var(--muted)"></div>
+        </div>
+      </div>
+
+      <div class="card flush">
+        <div class="card-head">
+          <div><h3>Open orders</h3>
+            <div class="sub">/v1/api/iserver/account/orders</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="loadOrders()">Refresh</button>
+          </div>
+        </div>
+        <div id="ordersBody" class="empty">
+          <p>Connect and place an order to see it here.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ POSITIONS ============ -->
+    <section class="page view" id="view-positions">
+      <h1 class="serif" style="margin:0 0 6px;font-size:40px;line-height:1.05">Positions &amp; orders</h1>
+      <p style="margin:0 0 16px;color:var(--muted)">Live · reconciled with IBKR every refresh.</p>
+
+      <div class="grid-2">
+        <div class="card flush">
+          <div class="card-head"><h3>Open positions</h3><button class="btn" onclick="loadPositions()">Refresh</button></div>
+          <div id="positionsBody" class="empty"><p>Connect to load.</p></div>
+        </div>
+        <div class="card flush">
+          <div class="card-head"><h3>Trades (today)</h3><button class="btn" onclick="loadTrades()">Refresh</button></div>
+          <div id="tradesBody" class="empty"><p>Connect to load.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RISK ============ -->
+    <section class="page view" id="view-risk">
+      <h1 class="serif" style="margin:0 0 6px;font-size:40px;line-height:1.05">Risk</h1>
+      <p style="margin:0 0 16px;color:var(--muted)">Computed locally from your real IBKR positions &amp; configured limits.</p>
+
+      <div class="grid-4" style="margin-bottom:14px" id="riskMetrics">
+        <div class="card empty" style="grid-column: 1 / -1"><p>Connect to compute risk metrics from real positions.</p></div>
+      </div>
+
+      <div class="card">
+        <h3 class="serif" style="margin:0 0 8px;font-size:22px">Risk limits (config)</h3>
+        <div class="form-row"><label>Daily DD stop</label><input class="input" value="3%"></div>
+        <div class="form-row"><label>Weekly DD stop</label><input class="input" value="8%"></div>
+        <div class="form-row"><label>Max % per market</label><input class="input" value="5%"></div>
+        <div class="form-row"><label>Max % per category</label><input class="input" value="25%"></div>
+        <div class="form-row"><label>Max capital deployed</label><input class="input" value="60%"></div>
+      </div>
+    </section>
+
+    <!-- ============ CONNECTION ============ -->
+    <section class="page view" id="view-connection">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px">
+        <div>
+          <h1 class="serif" style="margin:0;font-size:40px;line-height:1.05">IBKR connection</h1>
+          <p style="margin:6px 0 0;color:var(--muted)">OAuth 2.0 (private-key JWT) → SSO → tickle → /ssodh/init → trade. All keys stay on your local machine.</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="disconnect()">Logout</button>
+          <button class="btn btn-primary" onclick="connect()">Connect</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px">
+        <div class="flow" id="flowSteps">
+          <div class="step pending"><div class="n">1</div><div class="l">POST /oauth2/api/v1/token</div></div>
+          <div class="step pending"><div class="n">2</div><div class="l">POST /gw/api/v1/sso-sessions</div></div>
+          <div class="step pending"><div class="n">3</div><div class="l">POST /v1/api/tickle</div></div>
+          <div class="step pending"><div class="n">4</div><div class="l">/ssodh/init</div></div>
+          <div class="step pending"><div class="n">5</div><div class="l">sleep 3–5s</div></div>
+          <div class="step pending"><div class="n">6</div><div class="l">GET /iserver/accounts</div></div>
+          <div class="step pending"><div class="n">7</div><div class="l">tickle every 90s</div></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="serif" style="margin:0 0 8px;font-size:22px">Credentials (paper)</h3>
+          <p style="margin:0 0 8px;color:var(--muted);font-size:12px">Stored in <span class="mono">config.json</span> alongside the server. Never sent anywhere except <span class="mono">api.ibkr.com</span>.</p>
+          <div class="form-row"><label>clientId</label><input class="input" id="cfgClientId" placeholder="TradeFox-paper"></div>
+          <div class="form-row"><label>clientKeyId</label><input class="input" id="cfgClientKeyId" placeholder="main"></div>
+          <div class="form-row"><label>credential <span class="hint">IBKR username</span></label><input class="input" id="cfgCredential" placeholder="tradf3020"></div>
+          <div class="form-row"><label>accountId</label><input class="input" id="cfgAccountId" placeholder="DUP169897"></div>
+          <div class="form-row"><label>Source IP <span class="hint">declared in the SSO JWT — no whitelisting needed</span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="input" id="cfgIp" placeholder="auto-detected on connect" style="flex:1">
+              <button class="btn" type="button" onclick="detectIp()">Detect</button>
+              <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);white-space:nowrap"><input type="checkbox" id="cfgAutoIp" checked> auto on connect</label>
+            </div></div>
+          <div class="form-row"><label>Alternative IPs <span class="hint">comma-separated, e.g. Prithvir's London IP</span></label><input class="input" id="cfgAltIps" placeholder="103.126.199.48, 81.96.x.x"></div>
+          <div class="form-row"><label>Private key path <span class="hint">3072+ bit RSA .pem</span></label><input class="input" id="cfgPk" placeholder="/Users/you/.tradefox/keys/privatekey.pem"></div>
+          <div class="form-row"><label>scope</label><input class="input" id="cfgScope" value="sso-sessions.write"></div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn" onclick="saveConfig()">Save config</button>
+            <button class="btn btn-dark" onclick="(async()=>{await saveConfig(); await connect();})()">Save &amp; connect</button>
+            <button class="btn btn-ghost" onclick="loadConfig()">Reload</button>
+          </div>
+          <div id="cfgMsg" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+        </div>
+
+        <div class="card">
+          <h3 class="serif" style="margin:0 0 8px;font-size:22px">Auth response</h3>
+          <pre class="code" id="authResponse">disconnected</pre>
+          <div style="margin-top:10px;font-size:11px;color:var(--muted)" id="authResponseFooter">No active session.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3 class="serif" style="margin:0 0 8px;font-size:22px">Common errors → product behavior</h3>
+        <table class="t">
+          <thead><tr><th>Symptom</th><th>Likely cause</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip bad">401</span> Unauthorized</td><td>IP claim mismatch · stale token</td><td>Update <b>Public IP</b> field to match what was registered with IBKR, save, reconnect.</td></tr>
+            <tr><td><span class="chip bad">401</span> on /portfolio/*</td><td>Subaccounts not initialised</td><td>Backend auto-calls <span class="mono">/portfolio/subaccounts</span> first. If still failing, reconnect.</td></tr>
+            <tr><td><span class="chip bad">403</span> Forbidden</td><td>credential is not a valid IBKR username</td><td>Use one of the assigned usernames: <b>tradf3020 / tradf489 / tradf035</b> for DUP169897.</td></tr>
+            <tr><td><span class="chip warn">order rejected</span></td><td>schedule / size / price-band</td><td>Check market schedule via <span class="mono">/forecast/contract/schedules</span> and tick rules.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ DATA ENGINE ============ -->
+    <section class="page view" id="view-data">
+      <h1 class="serif" style="margin:0 0 6px;font-size:40px;line-height:1.05">Data engine</h1>
+      <p style="margin:0 0 16px;color:var(--muted)">Local research store. MVP: in-memory + JSON snapshots; production: Postgres + TimescaleDB.</p>
+
+      <div class="card">
+        <h3 class="serif" style="margin:0 0 8px;font-size:22px">Pipelines</h3>
+        <div id="pipelinesBody">
+          <div class="alert info"><span class="dot"></span><div><b>Snapshot &amp; history pulls</b> are wired to live IBKR endpoints. They run on demand from the Markets and Backtests pages — no scheduled ingest yet.</div></div>
+          <div class="alert warn"><span class="dot"></span><div><b>WebSocket streamer</b> not yet started. Endpoint <span class="mono">wss://api.ibkr.com/v1/api/ws?bearer_token=…</span> available once connected.</div></div>
+          <div class="alert info"><span class="dot"></span><div><b>Resolutions</b> ingest pending — IBKR settlement labels need to be scraped or entered.</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3 class="serif" style="margin:0 0 8px;font-size:22px">Schema</h3>
+<pre class="code">markets(market_id, conid, title, category, rules_json,
+        schedule_json, expiry_time, …)
+market_snapshots(market_id, ts, bid, ask, last, mid, bid_size, ask_size, volume)
+market_bars(market_id, ts, o,h,l,c,v, bar_size)
+resolutions(market_id, outcome, settle_px, resolved_at)
+strategy_signals(strategy_id, market_id, ts, fair_value, market_price, edge_bps)
+simulated_trades(strategy_id, market_id, ts, side, px, qty, fees, slippage, pv_after)</pre>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* ============ helpers ============ */
+const API = (path, opts={}) => fetch(path, {headers:{'Content-Type':'application/json'}, ...opts}).then(async r => {
+  const text = await r.text();
+  let body; try { body = JSON.parse(text); } catch { body = text; }
+  if (!r.ok) throw {status: r.status, body};
+  return body;
+});
+const fmt = {
+  usd: v => v == null ? '—' : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2}),
+  num: v => v == null ? '—' : Number(v).toLocaleString(),
+  px:  v => v == null ? '—' : Number(v).toFixed(3),
+  pct: v => v == null ? '—' : (v*100).toFixed(2) + '%',
+};
+function setText(id, v) { const el = document.getElementById(id); if (el) el.innerText = v; }
+function showError(e, where='') {
+  const msg = e?.body?.detail || e?.body || e?.message || String(e);
+  console.error(where, e);
+  alert(`${where}\n\n${msg}`);
+}
+
+/* ============ navigation ============ */
+function navigate(view){
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
+  document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
+  document.getElementById('view-'+view).classList.add('active');
+  document.getElementById('crumb').innerText = document.querySelector('.nav-item.active .lbl').innerText;
+  window.scrollTo({top:0, behavior:'instant'});
+  if (view === 'markets')   loadCategories();
+  if (view === 'positions') { loadPositions(); loadTrades(); }
+  if (view === 'paper')     { loadOrders(); }
+  if (view === 'connection') loadConfig();
+  if (view === 'risk')      loadRisk();
+  if (view === 'dashboard') refreshDashboard();
+}
+document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => navigate(el.dataset.view)));
+document.getElementById('btnConnectTop').addEventListener('click', () => navigate('connection'));
+document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+
+/* ============ session ============ */
+let CFG = {};
+let SESS = null;
+
+async function loadConfig(){
+  try {
+    CFG = await API('/api/config');
+    setText('cfgMsg', CFG.complete ? 'Config complete.' : 'Some fields are empty — save before connecting.');
+    document.getElementById('cfgClientId').value    = CFG.clientId || '';
+    document.getElementById('cfgClientKeyId').value = CFG.clientKeyId || '';
+    document.getElementById('cfgCredential').value  = CFG.credential || '';
+    document.getElementById('cfgAccountId').value   = CFG.accountId || '';
+    document.getElementById('cfgIp').value          = CFG.ip || '';
+    document.getElementById('cfgAltIps').value      = (CFG.alternativeIps || []).join(', ');
+    document.getElementById('cfgAutoIp').checked    = CFG.autoDetectIp !== false;
+    // Don't auto-fill the redacted privateKeyPath — let user retype to update.
+    if (CFG.privateKeyPath && !CFG.privateKeyPath.startsWith('•••'))
+      document.getElementById('cfgPk').value = CFG.privateKeyPath;
+    else if (CFG.privateKeyPath)
+      document.getElementById('cfgPk').placeholder = CFG.privateKeyPath + ' (saved)';
+    document.getElementById('cfgScope').value       = CFG.scope || 'sso-sessions.write';
+  } catch (e) { showError(e, 'loadConfig'); }
+}
+
+async function saveConfig(){
+  const payload = {
+    clientId:    document.getElementById('cfgClientId').value.trim(),
+    clientKeyId: document.getElementById('cfgClientKeyId').value.trim(),
+    credential:  document.getElementById('cfgCredential').value.trim(),
+    accountId:   document.getElementById('cfgAccountId').value.trim(),
+    ip:          document.getElementById('cfgIp').value.trim(),
+    scope:       document.getElementById('cfgScope').value.trim() || 'sso-sessions.write',
+  };
+  const pk = document.getElementById('cfgPk').value.trim();
+  if (pk) payload.privateKeyPath = pk;
+  payload.autoDetectIp = document.getElementById('cfgAutoIp').checked;
+  payload.alternativeIps = document.getElementById('cfgAltIps').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    CFG = await API('/api/config', {method:'POST', body: JSON.stringify(payload)});
+    setText('cfgMsg', 'Saved.');
+  } catch (e) { showError(e, 'saveConfig'); }
+}
+
+async function loadSession(){
+  try { SESS = await API('/api/session'); }
+  catch (e) { SESS = {authed:false}; }
+  paintSession();
+}
+
+function paintSession(){
+  const authed = SESS?.authed;
+  const pulse = document.getElementById('pulse');
+  pulse.classList.toggle('live', !!authed);
+  pulse.classList.toggle('dead', !authed);
+  setText('pulseText', authed ? 'Live' : 'Disconnected');
+  document.getElementById('connectBanner').style.display = authed ? 'none' : 'block';
+
+  setText('sAcct', SESS?.accounts?.[0]?.accountId || (CFG.accountId || '—'));
+  setText('sUser', CFG.credential || '—');
+  setText('sTickle', SESS?.last_tickle_age_seconds != null ? SESS.last_tickle_age_seconds + 's ago' : '—');
+  setText('heroAcct', SESS?.accounts?.[0]?.accountId || (CFG.accountId || '—'));
+
+  const flow = document.querySelectorAll('#flowSteps .step');
+  if (flow.length){
+    flow.forEach(s => s.classList.remove('done','active'));
+    flow.forEach(s => s.classList.add('pending'));
+    if (authed) {
+      flow[0].classList.add('done'); flow[0].classList.remove('pending');
+      flow[1].classList.add('done'); flow[1].classList.remove('pending');
+      flow[2].classList.add('done'); flow[2].classList.remove('pending');
+      if (SESS.ssodh_inited) { flow[3].classList.add('done'); flow[3].classList.remove('pending'); }
+      flow[4].classList.add('done'); flow[4].classList.remove('pending');
+      if ((SESS.accounts||[]).length) { flow[5].classList.add('done'); flow[5].classList.remove('pending'); }
+      flow[6].classList.add('active'); flow[6].classList.remove('pending');
+    }
+  }
+
+  const auth = document.getElementById('authResponse');
+  if (auth) {
+    if (!authed) auth.innerText = 'disconnected';
+    else auth.innerText =
+`bearer_token   present (length ${SESS.session_token_present ? '✓' : '—'})
+session_token  ${SESS.session_token_present ? 'present' : '—'}
+issued_age     ${SESS.issued_age_seconds}s
+last_tickle    ${SESS.last_tickle_age_seconds}s ago
+ssodh_inited   ${SESS.ssodh_inited}
+accounts       ${(SESS.accounts || []).map(a => a.accountId).join(', ') || '—'}`;
+    setText('authResponseFooter', SESS.last_error ? ('last error: ' + SESS.last_error) : 'Session healthy.');
+  }
+
+  const sh = document.getElementById('sessionHealth');
+  if (sh) {
+    sh.innerHTML = `
+      <div><span class="k">status</span> <span class="v">${authed ? 'connected' : 'disconnected'}</span></div>
+      <div><span class="k">account</span> <span class="v">${(SESS?.accounts||[])[0]?.accountId || '—'}</span></div>
+      <div><span class="k">issued</span> <span class="v">${SESS?.issued_age_seconds ?? '—'}s ago</span></div>
+      <div><span class="k">last tickle</span> <span class="v">${SESS?.last_tickle_age_seconds ?? '—'}s ago</span></div>
+      <div><span class="k">ssodh</span> <span class="v">${SESS?.ssodh_inited ? '✓' : '—'}</span></div>
+      <div><span class="k">last error</span> <span class="v">${SESS?.last_error || '—'}</span></div>
+    `;
+  }
+}
+
+async function connect(){
+  try {
+    SESS = await API('/api/connect', {method:'POST'});
+    paintSession();
+    refreshAll();
+  } catch (e) { showError(e, 'connect'); await loadSession(); }
+}
+async function disconnect(){
+  try { await API('/api/disconnect', {method:'POST'}); } catch {}
+  await loadSession();
+}
+async function detectIp(){
+  try {
+    const r = await API('/api/whoami');
+    if (r.ip) {
+      document.getElementById('cfgIp').value = r.ip;
+      setText('cfgMsg', 'Detected IP ' + r.ip + ' — click Save to persist.');
+    } else {
+      setText('cfgMsg', 'Could not detect IP — check your network connection.');
+    }
+  } catch (e) { showError(e, 'detectIp'); }
+}
+
+async function tickleNow(){
+  try { await API('/api/tickle', {method:'POST'}); } catch (e) { showError(e, 'tickle'); }
+  await loadSession();
+}
+
+/* ============ dashboard ============ */
+async function refreshDashboard(){
+  if (!SESS?.authed) return;
+  try {
+    const summary = await API('/api/portfolio/summary');
+    // IBKR summary is a dict of metrics; values shaped like {amount, currency}
+    const get = k => summary?.[k]?.amount ?? null;
+    setText('heroEquity',     fmt.usd(get('netliquidation')));
+    setText('heroRealized',   fmt.usd(get('realizedpnl')));
+    setText('heroUnrealized', fmt.usd(get('unrealizedpnl')));
+    setText('heroBP',         fmt.usd(get('buyingpower')));
+    setText('kpiNetLiq',      fmt.usd(get('netliquidation')));
+    setText('kpiCash',        fmt.usd(get('availablefunds-c') ?? get('availablefunds')));
+    setText('kpiExcess',      fmt.usd(get('excessliquidity-c') ?? get('excessliquidity')));
+    setText('kpiMaint',       fmt.usd(get('maintmarginreq-c') ?? get('maintmarginreq')));
+
+    const upnl = get('unrealizedpnl');
+    const dl = document.getElementById('heroDelta');
+    if (upnl != null) {
+      dl.innerText = (upnl >= 0 ? '▲ ' : '▼ ') + fmt.usd(upnl) + ' unrealized';
+    }
+  } catch (e) { console.warn('summary', e); }
+
+  loadPositions(true);
+  loadTrades(true);
+}
+
+/* ============ positions ============ */
+async function loadPositions(forDashboard=false){
+  if (!SESS?.authed) return;
+  try {
+    const rows = await API('/api/portfolio/positions');
+    const list = Array.isArray(rows) ? rows : (rows?.positions || []);
+    setText('heroPos', list.length);
+    const html = list.length ? `
+      <table class="t">
+        <thead><tr><th>Contract</th><th>Symbol</th><th class="num">Qty</th><th class="num">Avg px</th><th class="num">Mark</th><th class="num">Unrealized</th></tr></thead>
+        <tbody>${list.map(p => `
+          <tr>
+            <td>${p.contractDesc || p.description || p.fullName || p.conid}</td>
+            <td>${p.ticker || p.assetClass || ''}</td>
+            <td class="num">${fmt.num(p.position)}</td>
+            <td class="num">${fmt.px(p.avgPrice ?? p.avgCost)}</td>
+            <td class="num">${fmt.px(p.mktPrice)}</td>
+            <td class="num ${(p.unrealizedPnl||0) < 0 ? 'delta-down' : 'delta-up'}">${fmt.usd(p.unrealizedPnl)}</td>
+          </tr>`).join('')}</tbody>
+      </table>` : `<div class="empty"><p>No open positions.</p></div>`;
+    document.getElementById('positionsBody').innerHTML = html;
+    if (forDashboard) document.getElementById('dashPositions').innerHTML = html;
+  } catch (e) {
+    document.getElementById('positionsBody').innerHTML = `<div class="empty"><p>Error: ${e?.body?.detail || e}</p></div>`;
+  }
+}
+
+async function loadTrades(forDashboard=false){
+  if (!SESS?.authed) return;
+  try {
+    const rows = await API('/api/trades');
+    const list = Array.isArray(rows) ? rows : (rows?.trades || []);
+    const html = list.length ? `
+      <table class="t">
+        <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Px</th><th>Status</th></tr></thead>
+        <tbody>${list.slice(0, 12).map(t => `
+          <tr>
+            <td class="mono">${(t.trade_time_r || t.trade_time || '').toString().slice(-8)}</td>
+            <td>${t.contract_description_1 || t.symbol || t.conid}</td>
+            <td>${t.side || ''}</td>
+            <td class="num">${fmt.num(t.size)}</td>
+            <td class="num">${fmt.px(t.price)}</td>
+            <td><span class="chip ok">${t.order_description || 'filled'}</span></td>
+          </tr>`).join('')}</tbody>
+      </table>` : `<div class="empty"><p>No trades today.</p></div>`;
+    document.getElementById('tradesBody').innerHTML = html;
+    if (forDashboard) document.getElementById('dashTrades').innerHTML = html;
+  } catch (e) {
+    document.getElementById('tradesBody').innerHTML = `<div class="empty"><p>Error: ${e?.body?.detail || e}</p></div>`;
+  }
+}
+
+/* ============ markets ============ */
+let CATS = [];        // category tree
+let MARKETS = [];     // flattened contracts with snapshots
+
+async function loadCategories(){
+  if (!SESS?.authed) {
+    document.getElementById('marketsEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('marketsEmpty').style.display = 'none';
+  const grid = document.getElementById('marketGrid');
+  grid.innerHTML = `<div class="card empty" style="grid-column:1/-1"><p>Loading IBKR ForecastEx category tree…</p></div>`;
+
+  try {
+    const tree = await API('/api/forecast/categories');
+    // Real IBKR shape: { categories: { "g137940": {name, parent_id, markets: [{name, symbol, exchange, conid, product_conid}]} , ... } }
+    const cats = tree?.categories || {};
+    CATS = [];
+    MARKETS = [];
+    for (const [id, c] of Object.entries(cats)){
+      CATS.push({id, name: c.name || id, parent: c.parent_id});
+      for (const m of (c.markets || [])){
+        MARKETS.push({
+          conid: m.conid,
+          product_conid: m.product_conid,
+          title: m.name,
+          symbol: m.symbol,
+          exchange: m.exchange,
+          categoryId: id,
+          _cat: c.name || id,
+        });
+      }
+    }
+    // populate category filter
+    const sel = document.getElementById('filterCat');
+    sel.innerHTML = '<option value="">All categories</option>' +
+      CATS.sort((a,b)=>a.name.localeCompare(b.name)).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+    setText('marketCount', `${MARKETS.length} contracts in ${CATS.length} categories`);
+
+    if (!MARKETS.length){
+      grid.innerHTML = `<div class="card empty" style="grid-column:1/-1"><h4>No event contracts in tree.</h4><p>The /forecast/category/tree endpoint returned categories but no markets. Ask John to confirm ForecastEx subscription.</p></div>`;
+      return;
+    }
+
+    // Render immediately with metadata, then enrich asynchronously with snapshots.
+    renderMarkets();
+    enrichWithSnapshots().then(() => renderMarkets()).catch(()=>{});
+  } catch (e) {
+    grid.innerHTML = `<div class="card empty" style="grid-column:1/-1"><h4>Couldn't load category tree.</h4><p>${e?.body?.detail || e}</p></div>`;
+  }
+}
+
+async function enrichWithSnapshots(){
+  const conids = MARKETS.map(m => m.conid).filter(Boolean);
+  if (!conids.length) return;
+  // IBKR snapshot quirks:
+  //   1. First call per conid is a "warmup" that often returns only metadata.
+  //   2. Payload size limit — chunk conids in batches of 30.
+  // So: warmup pass then a real pass with a short delay between.
+  const fields = '31,84,85,86,88,7295,7296';
+  const chunks = [];
+  for (let i = 0; i < conids.length; i += 30) chunks.push(conids.slice(i, i+30));
+
+  async function pull(){
+    const all = [];
+    for (const ch of chunks){
+      try {
+        const snap = await API('/api/marketdata/snapshot?conids=' + ch.join(',') + '&fields=' + fields);
+        const list = Array.isArray(snap) ? snap : (snap?.snapshots || []);
+        list.forEach(s => all.push(s));
+      } catch (e) { /* keep going */ }
+    }
+    return all;
+  }
+
+  await pull();                                    // warmup
+  await new Promise(r => setTimeout(r, 1500));     // give IBKR a moment to populate
+  const list = await pull();                       // real values
+
+  const byConid = {};
+  list.forEach(s => { byConid[String(s.conid ?? s.conidEx)] = s; });
+  MARKETS.forEach(m => {
+    const s = byConid[String(m.conid)]; if (!s) return;
+    const fp = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    m._last     = fp(s['31']);
+    m._bid      = fp(s['84']);
+    m._ask      = fp(s['86']);
+    m._askSize  = fp(s['85']);
+    m._bidSize  = fp(s['88']);
+    m._open     = fp(s['7295']);
+    m._close    = fp(s['7296']);
+    m._updated  = s._updated;
+  });
+}
+
+function renderMarkets(){
+  const cat = document.getElementById('filterCat').value;
+  const txt = document.getElementById('filterText').value.toLowerCase();
+  const maxSpread = parseFloat(document.getElementById('filterMaxSpread').value);
+  const minPx = parseFloat(document.getElementById('filterMinPrice').value);
+  const maxPx = parseFloat(document.getElementById('filterMaxPrice').value);
+  const activeOnly = document.getElementById('filterActiveOnly')?.checked;
+
+  // Active = has a bid, ask, or last price returned by snapshot.
+  const isActive = m => (m._bid != null) || (m._ask != null) || (m._last != null);
+
+  const items = MARKETS.filter(m => {
+    if (cat && String(m.categoryId || m.parentId || '') !== String(cat)) return false;
+    const title = (m.title || m.description || m.name || '').toLowerCase();
+    if (txt && !title.includes(txt)) return false;
+    if (activeOnly && !isActive(m)) return false;
+    const yes = m._last ?? m._ask ?? m._bid;
+    if (!isNaN(minPx) && yes != null && yes < minPx) return false;
+    if (!isNaN(maxPx) && yes != null && yes > maxPx) return false;
+    if (!isNaN(maxSpread) && m._bid != null && m._ask != null && (m._ask - m._bid)*100 > maxSpread) return false;
+    return true;
+  });
+
+  // Sort active markets first; among active, by tightest spread; then by title.
+  items.sort((a, b) => {
+    const aa = isActive(a), ab = isActive(b);
+    if (aa !== ab) return aa ? -1 : 1;
+    if (aa && ab){
+      const sa = (a._ask != null && a._bid != null) ? (a._ask - a._bid) : 1;
+      const sb = (b._ask != null && b._bid != null) ? (b._ask - b._bid) : 1;
+      if (sa !== sb) return sa - sb;
+    }
+    return (a.title || '').localeCompare(b.title || '');
+  });
+
+  const activeCount = MARKETS.filter(isActive).length;
+  setText('marketCount', `${items.length} shown · ${activeCount}/${MARKETS.length} actively quoted`);
+  const grid = document.getElementById('marketGrid');
+  if (!items.length) {
+    grid.innerHTML = `<div class="card empty" style="grid-column:1/-1"><p>No contracts match your filters.</p></div>`;
+    return;
+  }
+  grid.innerHTML = items.slice(0, 60).map((m, i) => {
+    const yes = m._last ?? m._ask ?? m._bid;
+    const sp = (m._bid != null && m._ask != null) ? ((m._ask - m._bid)*100).toFixed(1) + 'c' : '—';
+    return `
+    <div class="market" onclick="openMarket(${MARKETS.indexOf(m)})">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="cat">${m._cat || m.category || ''}</div>
+        <span class="chip">conid ${m.conid || m.contractId || ''}</span>
+      </div>
+      <div class="title">${m.title || m.description || m.name || '(untitled)'}</div>
+      <div class="px-row">
+        <span class="yes">YES</span>
+        <span class="price mono">${yes != null && !isNaN(yes) ? Number(yes).toFixed(3) : '—'}</span>
+        <span style="color:var(--muted);font-size:11px">bid ${m._bid != null && !isNaN(m._bid) ? m._bid.toFixed(3) : '—'} · ask ${m._ask != null && !isNaN(m._ask) ? m._ask.toFixed(3) : '—'}</span>
+      </div>
+      <div class="meta">
+        <span>spread ${sp}</span>
+        <span>${m.expiry || m.expiration || m.expiryTime || ''}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openMarket(idx){
+  const m = MARKETS[idx]; if (!m) return;
+  const conid = m.conid || m.contractId;
+  const yes = m._last ?? m._ask ?? m._bid;
+  document.getElementById('drawerBody').innerHTML = `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">${m._cat || m.category || ''} · conid ${conid}</div>
+    <h2 class="serif" style="margin:6px 0 4px;font-size:30px;line-height:1.1">${m.title || m.description || m.name}</h2>
+    <div style="display:flex;gap:8px;align-items:baseline;margin:6px 0 14px">
+      <span class="yes" style="background:var(--green-soft);color:var(--green-deep);padding:2px 8px;border-radius:6px;font-size:11px">YES</span>
+      <span class="serif" style="font-size:42px">${yes != null && !isNaN(yes) ? Number(yes).toFixed(3) : '—'}</span>
+    </div>
+
+    <div class="grid-2" style="gap:10px;margin-bottom:14px">
+      <div class="card"><div class="kv"><div><span class="k">bid</span> <span class="v">${m._bid?.toFixed?.(3) ?? '—'}</span></div><div><span class="k">ask</span> <span class="v">${m._ask?.toFixed?.(3) ?? '—'}</span></div><div><span class="k">last</span> <span class="v">${m._last?.toFixed?.(3) ?? '—'}</span></div></div></div>
+      <div class="card"><div class="kv"><div><span class="k">bid size</span> <span class="v">${m._bidSize ?? '—'}</span></div><div><span class="k">ask size</span> <span class="v">${m._askSize ?? '—'}</span></div></div></div>
+    </div>
+
+    <h3 class="serif" style="margin:14px 0 6px;font-size:20px">Place paper order</h3>
+    <div class="grid-2" style="gap:8px">
+      <select class="input" id="dwSide"><option>BUY</option><option>SELL</option></select>
+      <select class="input" id="dwType"><option>LMT</option><option>MKT</option></select>
+      <input class="input" id="dwPx" type="number" step="0.001" value="${m._ask?.toFixed?.(3) ?? ''}" placeholder="limit">
+      <input class="input" id="dwQty" type="number" value="100">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" onclick="placeFromDrawer(${conid}, true)">What-if</button>
+      <button class="btn btn-primary" onclick="placeFromDrawer(${conid}, false)">Submit paper order</button>
+    </div>
+    <pre class="code" id="dwResult" style="margin-top:10px;display:none"></pre>
+
+    <h3 class="serif" style="margin:18px 0 6px;font-size:20px">Rules &amp; schedule</h3>
+    <div id="dwRules" class="kv" style="line-height:1.7">loading…</div>
+  `;
+  document.getElementById('mask').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+  // pull rules + schedule
+  try {
+    const [rules, sched] = await Promise.all([
+      API('/api/forecast/rules?conid=' + conid).catch(()=>null),
+      API('/api/forecast/schedules?conid=' + conid).catch(()=>null),
+    ]);
+    const flat = obj => Object.entries(obj || {}).slice(0, 12).map(([k,v]) => `<div><span class="k">${k}</span> <span class="v">${typeof v === 'object' ? JSON.stringify(v) : v}</span></div>`).join('');
+    document.getElementById('dwRules').innerHTML =
+      (rules ? `<div style="font-weight:500;margin:6px 0 4px">Rules</div>${flat(rules)}` : '') +
+      (sched ? `<div style="font-weight:500;margin:10px 0 4px">Schedule</div>${flat(sched)}` : '') ||
+      '<div>(no rules/schedule returned)</div>';
+  } catch (e) { document.getElementById('dwRules').innerHTML = `error: ${e?.body?.detail || e}`; }
+}
+function closeDrawer(){ document.getElementById('mask').classList.remove('open'); document.getElementById('drawer').classList.remove('open'); }
+document.getElementById('mask').addEventListener('click', closeDrawer);
+
+async function placeFromDrawer(conid, whatIf){
+  const order = {
+    acctId:  CFG.accountId, conid, orderType: document.getElementById('dwType').value,
+    side: document.getElementById('dwSide').value, tif: 'DAY',
+    quantity: Number(document.getElementById('dwQty').value),
+    price:    parseFloat(document.getElementById('dwPx').value) || undefined,
+  };
+  const url = whatIf ? '/api/orders/whatif' : '/api/orders/place';
+  const out = document.getElementById('dwResult');
+  out.style.display = 'block'; out.innerText = 'submitting…';
+  try {
+    const r = await API(url, {method:'POST', body: JSON.stringify({orders: [order]})});
+    out.innerText = JSON.stringify(r, null, 2);
+  } catch (e) { out.innerText = JSON.stringify(e, null, 2); }
+}
+
+/* ============ paper order form ============ */
+async function placeOrder(whatIf){
+  const order = {
+    acctId: CFG.accountId,
+    conid:  Number(document.getElementById('ordConid').value),
+    orderType: document.getElementById('ordType').value,
+    side: document.getElementById('ordSide').value,
+    tif:  document.getElementById('ordTif').value,
+    quantity: Number(document.getElementById('ordQty').value),
+    price: parseFloat(document.getElementById('ordPx').value) || undefined,
+  };
+  const url = whatIf ? '/api/orders/whatif' : '/api/orders/place';
+  const out = document.getElementById('orderResult');
+  out.innerText = 'submitting…';
+  try {
+    const r = await API(url, {method:'POST', body: JSON.stringify({orders: [order]})});
+    out.innerText = JSON.stringify(r, null, 2);
+    if (!whatIf) loadOrders();
+  } catch (e) { out.innerText = JSON.stringify(e, null, 2); }
+}
+
+async function loadOrders(){
+  if (!SESS?.authed) return;
+  try {
+    const r = await API('/api/orders');
+    const list = r?.orders || r?.snapshot || (Array.isArray(r) ? r : []);
+    if (!list.length) {
+      document.getElementById('ordersBody').innerHTML = `<div class="empty"><p>No open orders.</p></div>`;
+      return;
+    }
+    document.getElementById('ordersBody').innerHTML = `
+      <table class="t">
+        <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Filled</th><th class="num">Limit</th><th>Status</th><th></th></tr></thead>
+        <tbody>${list.map(o => `
+          <tr>
+            <td class="mono">${(o.lastExecutionTime_r || o.lastExecutionTime || '').toString().slice(0, 19)}</td>
+            <td>${o.ticker || o.contract_description_1 || o.conid}</td>
+            <td>${o.side || ''}</td>
+            <td class="num">${fmt.num(o.totalSize ?? o.size)}</td>
+            <td class="num">${fmt.num(o.filledQuantity)}</td>
+            <td class="num">${fmt.px(o.price)}</td>
+            <td><span class="chip ${(o.status||'').match(/Fill|Submit/i) ? 'ok' : ''}">${o.status || ''}</span></td>
+            <td><button class="btn btn-ghost" onclick="cancelOrder('${o.orderId}')" style="padding:3px 8px">Cancel</button></td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+  } catch (e) {
+    document.getElementById('ordersBody').innerHTML = `<div class="empty"><p>Error: ${e?.body?.detail || e}</p></div>`;
+  }
+}
+
+async function cancelOrder(id){
+  try { await API('/api/orders/' + id, {method:'DELETE'}); }
+  catch (e) { showError(e, 'cancel'); }
+  loadOrders();
+}
+async function cancelAllOrders(){
+  if (!confirm('Cancel ALL open orders on ' + CFG.accountId + '?')) return;
+  try {
+    const r = await API('/api/orders');
+    const list = r?.orders || r?.snapshot || (Array.isArray(r) ? r : []);
+    for (const o of list){ if (o.orderId) try { await API('/api/orders/' + o.orderId, {method:'DELETE'}); } catch {} }
+  } catch (e) { showError(e, 'cancelAll'); }
+  loadOrders();
+}
+
+/* ============ history chart ============ */
+async function loadHistory(){
+  if (!SESS?.authed) { showError({body:'Not connected'}, 'history'); return; }
+  const conid  = document.getElementById('histConid').value.trim();
+  const period = document.getElementById('histPeriod').value;
+  const bar    = document.getElementById('histBar').value;
+  if (!conid) return;
+  setText('histMeta', 'fetching…');
+  try {
+    const r = await API(`/api/marketdata/history?conid=${encodeURIComponent(conid)}&period=${period}&bar=${bar}`);
+    const data = r?.data || [];
+    if (!data.length) { setText('histMeta', '0 bars returned'); return; }
+    const closes = data.map(b => b.c ?? b.close);
+    const ts = data.map(b => b.t ?? b.time);
+    const min = Math.min(...closes), max = Math.max(...closes);
+    const W = 720, H = 220, pad = 30;
+    const x = i => pad + (i / (closes.length - 1)) * (W - pad*2);
+    const y = v => H - pad - ((v - min) / (max - min || 1)) * (H - pad*2);
+    const path = closes.map((v,i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
+    const fill = path + ` L${x(closes.length-1)},${H-pad} L${x(0)},${H-pad} Z`;
+    document.getElementById('histChart').innerHTML = `
+      <defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#9FE870" stop-opacity=".55"/><stop offset="1" stop-color="#9FE870" stop-opacity="0"/></linearGradient></defs>
+      <line x1="${pad}" x2="${W-pad}" y1="${pad}" y2="${pad}" stroke="#E6E1D6"/>
+      <line x1="${pad}" x2="${W-pad}" y1="${H/2}" y2="${H/2}" stroke="#E6E1D6"/>
+      <line x1="${pad}" x2="${W-pad}" y1="${H-pad}" y2="${H-pad}" stroke="#E6E1D6"/>
+      <text x="2" y="${pad+4}" font-size="10" fill="#6E6F6A">${max.toFixed(2)}</text>
+      <text x="2" y="${H-pad+4}" font-size="10" fill="#6E6F6A">${min.toFixed(2)}</text>
+      <path d="${fill}" fill="url(#g1)"/>
+      <path d="${path}" fill="none" stroke="#163300" stroke-width="2"/>
+      <circle cx="${x(closes.length-1)}" cy="${y(closes[closes.length-1])}" r="4" fill="#163300"/>`;
+    setText('histMeta', `${data.length} bars · last ${closes[closes.length-1].toFixed(3)}`);
+    document.getElementById('histEmpty').style.display = 'none';
+  } catch (e) {
+    setText('histMeta', 'error');
+    showError(e, 'history');
+  }
+}
+
+/* ============ strategy template cards (config only) ============ */
+const STRATEGIES = [
+  {n:1, name:'Fair-Value Edge Trader',     desc:'Trade when model probability disagrees with the IBKR market price by more than fees + spread + slippage.'},
+  {n:2, name:'High-Probability Tail',      desc:'Buy 80–98c contracts when model fair value materially exceeds ask. The Polymarket "sell disaster" pattern, ported.'},
+  {n:3, name:'Longshot Catalyst',          desc:'Buy 1–25c contracts ahead of an information shock with asymmetric upside. Manual catalyst tagging at MVP.'},
+  {n:4, name:'Passive Market Maker',       desc:'Quote bid/ask around fair value, capture spread, manage adverse selection. YES-only on IBKR until shorting opens.'},
+  {n:5, name:'Cross-Contract Relative Value', desc:'Trade pairs/baskets when complement, exhaustive, or implication relationships violate.'},
+  {n:6, name:'Drift / Momentum',           desc:'Capture slow repricing after underlying moves or news. Volume-confirmed continuation entries.'},
+  {n:7, name:'Mean Reversion',             desc:'Fade extreme short-term moves with no corresponding catalyst, snap back toward fair value.'},
+];
+function renderStrats(){
+  document.getElementById('stratGrid').innerHTML = STRATEGIES.map(s => `
+    <div class="strat">
+      <div class="num">${s.n.toString().padStart(2,'0')}</div>
+      <div class="name">${s.name}</div>
+      <div class="desc">${s.desc}</div>
+      <div class="actions">
+        <button class="btn">Configure</button>
+        <button class="btn btn-dark" disabled title="Backtest engine pending">Backtest →</button>
+      </div>
+    </div>`).join('');
+}
+renderStrats();
+
+/* ============ risk (computed from real positions) ============ */
+async function loadRisk(){
+  const wrap = document.getElementById('riskMetrics');
+  if (!SESS?.authed) {
+    wrap.innerHTML = `<div class="card empty" style="grid-column: 1 / -1"><p>Connect to compute risk metrics from real positions.</p></div>`;
+    return;
+  }
+  try {
+    const [summary, positions] = await Promise.all([
+      API('/api/portfolio/summary').catch(()=>({})),
+      API('/api/portfolio/positions').catch(()=>[]),
+    ]);
+    const list = Array.isArray(positions) ? positions : (positions?.positions || []);
+    const equity = summary?.netliquidation?.amount || 0;
+    const deployed = list.reduce((a,p) => a + Math.abs((p.mktValue ?? p.marketValue ?? 0)), 0);
+    const largest = list.reduce((m,p) => Math.max(m, Math.abs(p.mktValue ?? p.marketValue ?? 0)), 0);
+    const upnl = summary?.unrealizedpnl?.amount || 0;
+    wrap.innerHTML = `
+      <div class="card"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Net liq</div><div class="serif" style="font-size:30px">${fmt.usd(equity)}</div></div>
+      <div class="card"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Capital deployed</div><div class="serif" style="font-size:30px">${equity ? ((deployed/equity)*100).toFixed(1) : '—'}%</div><div style="font-size:11px;color:var(--muted)">${fmt.usd(deployed)} of ${fmt.usd(equity)}</div></div>
+      <div class="card"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Largest market</div><div class="serif" style="font-size:30px">${equity ? ((largest/equity)*100).toFixed(1) : '—'}%</div><div style="font-size:11px;color:var(--muted)">cap 5%</div></div>
+      <div class="card"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Unrealized PnL</div><div class="serif" style="font-size:30px;color:${upnl>=0?'var(--green-deep)':'var(--red)'}">${fmt.usd(upnl)}</div></div>
+    `;
+  } catch (e) {
+    wrap.innerHTML = `<div class="card empty" style="grid-column: 1 / -1"><p>Error: ${e?.body?.detail || e}</p></div>`;
+  }
+}
+
+/* ============ refresh-all ============ */
+async function refreshAll(){
+  await loadSession();
+  if (!SESS?.authed) return;
+  refreshDashboard();
+  loadOrders();
+}
+
+/* ============ keyboard ============ */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDrawer();
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){
+    e.preventDefault(); document.getElementById('searchBox').focus();
+  }
+});
+
+/* ============ boot ============ */
+(async function boot(){
+  await loadConfig();
+  await loadSession();
+  if (SESS?.authed) refreshDashboard();
+  setInterval(loadSession, 5000);
+})();
+</script>
+</body>
+</html>

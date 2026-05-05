@@ -1,0 +1,9 @@
+{
+  "ip": "PUT_YOUR_PUBLIC_IP_HERE",
+  "clientId": "TradeFox-paper",
+  "clientKeyId": "main",
+  "credential": "tradf3020",
+  "privateKeyPath": "/Users/YashPalod/.tradefox/keys/privatekey.pem",
+  "accountId": "DUP169897",
+  "scope": "sso-sessions.write"
+}

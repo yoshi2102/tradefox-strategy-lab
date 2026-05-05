@@ -1,0 +1,30 @@
+# Render blueprint for TradeFox IBKR Strategy Lab.
+# Push this repo to GitHub, then on Render: New → Blueprint → connect repo.
+# Set the secret env vars marked `sync: false` in the Render dashboard.
+services:
+  - type: web
+    name: tradefox-strategy-lab
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: HOST
+        value: "0.0.0.0"
+      # IBKR_* are set in the Render dashboard (Environment tab) so they
+      # never end up in git. Render provides $PORT automatically.
+      - key: IBKR_CLIENT_ID
+        sync: false
+      - key: IBKR_CLIENT_KEY_ID
+        sync: false
+      - key: IBKR_CREDENTIAL
+        sync: false
+      - key: IBKR_ACCOUNT_ID
+        sync: false
+      - key: IBKR_PRIVATE_KEY
+        sync: false             # paste your PEM (or base64 of it) here
+      - key: IBKR_AUTO_DETECT_IP
+        value: "true"
