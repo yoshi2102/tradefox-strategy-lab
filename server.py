@@ -671,6 +671,44 @@ async def forecast_bulk_drill(
     return {"events": events}
 
 
+@app.get("/api/forecast/bulk-rules")
+async def forecast_bulk_rules(conids: str, concurrency: int = 6):
+    """Fetch resolution rules for many event conids in one round-trip.
+
+    Returns: { rules: { "<conid>": { description, threshold, market_name,
+                                      source_agency, product_code, payout,
+                                      last_trade_time, release_time, payout_time,
+                                      market_rules_link, data_and_resolution_link,
+                                      exchange_timezone, ... } } }
+    """
+    ids = [c.strip() for c in conids.split(",") if c.strip()]
+    if not ids:
+        return {"rules": {}}
+
+    sem = asyncio.Semaphore(max(1, min(concurrency, 12)))
+    KEEP = (
+        "market_name", "description", "measured_period", "threshold",
+        "source_agency", "product_code", "payout", "price_increment",
+        "last_trade_time", "release_time", "payout_time", "exchange_timezone",
+        "market_rules_link", "data_and_resolution_link",
+    )
+
+    async def fetch_one(cid: str):
+        async with sem:
+            try:
+                r = await ibkr_get(
+                    "/v1/api/forecast/contract/rules", params={"conid": cid}
+                )
+                if not isinstance(r, dict):
+                    return cid, None
+                return cid, {k: r.get(k) for k in KEEP}
+            except Exception:
+                return cid, None
+
+    results = await asyncio.gather(*[fetch_one(cid) for cid in ids])
+    return {"rules": {cid: data for cid, data in results if data is not None}}
+
+
 # ─── market data ───
 @app.get("/api/marketdata/snapshot")
 async def md_snapshot(conids: str, fields: str = "84,85,86,87,88,7638,8393,8394,6509"):

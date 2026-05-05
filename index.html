@@ -1062,6 +1062,30 @@ async function bulkDrillAllEvents(){
     setText('marketCount', `${MARKETS.length} contracts · drilled ${Math.min(done, parents.length)}/${parents.length}`);
     renderMarkets();
   }
+  // Once legs are loaded, fetch resolution criteria for every event in the background.
+  bulkLoadRules().catch(()=>{});
+}
+
+async function bulkLoadRules(){
+  const ids = MARKETS.filter(m => m.conid && !m._rules).map(m => m.conid);
+  if (!ids.length) return;
+  const BATCH = 80;
+  let done = 0;
+  for (let i = 0; i < ids.length; i += BATCH){
+    const chunk = ids.slice(i, i + BATCH);
+    try {
+      const r = await API('/api/forecast/bulk-rules?conids=' + chunk.join(','));
+      const map = r?.rules || {};
+      Object.entries(map).forEach(([cid, data]) => {
+        const m = MARKETS.find(x => Number(x.conid) === Number(cid));
+        if (m) m._rules = data;
+      });
+    } catch {}
+    done += chunk.length;
+    setText('marketCount',
+      `${MARKETS.length} contracts · loaded resolution criteria ${Math.min(done, ids.length)}/${ids.length}`);
+    renderMarkets();
+  }
 }
 
 async function enrichWithSnapshots(){
@@ -1292,12 +1316,15 @@ function renderMarkets(){
       : (m._drilling ? 'loading…' : 'click to load');
     const expandIcon = `<span style="display:inline-block;width:14px;color:var(--muted);font-size:10px">${expanded ? '▼' : '▶'}</span>`;
 
+    const desc = m._rules?.description || '';
+    const descShort = desc.length > 120 ? desc.slice(0, 117) + '…' : desc;
     const eventRow = `
     <tr data-conid="${m.conid}" class="event-row" onclick="toggleEvent('${m.conid}', ${idx})" style="cursor:pointer;background:var(--surface-2)">
       <td>
         ${expandIcon}
         <strong style="color:var(--ink)">${m.title || '(untitled)'}</strong>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;margin-left:18px">${m._catPath || m._cat || ''}</div>
+        ${descShort ? `<div style="font-size:11.5px;color:var(--ink-2);margin-top:4px;margin-left:18px;line-height:1.35;max-width:680px">${descShort}</div>` : ''}
       </td>
       <td style="font-size:11px;color:var(--muted)">${strikeText}<br><span class="mono" style="font-size:10.5px">${m.conid || ''}</span></td>
       <td class="num" data-col="yes" style="color:var(--green-deep);font-weight:500">${yesCol}</td>
@@ -1310,7 +1337,46 @@ function renderMarkets(){
       <td style="font-size:10.5px;color:var(--muted)">${legs.length ? (expanded ? 'collapse' : 'expand') : ''}</td>
     </tr>`;
 
-    if (!expanded || !legs.length) return eventRow;
+    if (!expanded) return eventRow;
+
+    // Resolution criteria block (full description, threshold, source, links).
+    const r = m._rules;
+    let rulesRow = '';
+    if (r){
+      const fmtTs = ts => ts ? new Date(typeof ts === 'number' ? ts : Date.parse(ts)).toLocaleString() : '—';
+      const link = (url, label) => url ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--green-deep);text-decoration:underline">${label}</a>` : '';
+      rulesRow = `
+      <tr class="rules-row"><td colspan="10" style="background:#FBF9F4;padding:14px 18px 14px 42px;border-top:1px solid var(--line)">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Resolution criteria</div>
+        <div style="font-size:13px;color:var(--ink);line-height:1.5;max-width:920px;margin-bottom:10px">${r.description || '—'}</div>
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 18px;font-size:11.5px;color:var(--ink-2)">
+          <div><span style="color:var(--muted)">Threshold</span><br>${r.threshold || '—'}</div>
+          <div><span style="color:var(--muted)">Measured period</span><br>${r.measured_period || '—'}</div>
+          <div><span style="color:var(--muted)">Source agency</span><br>${r.source_agency || '—'}</div>
+          <div><span style="color:var(--muted)">Payout</span><br>${r.payout || '—'}</div>
+          <div><span style="color:var(--muted)">Last trade</span><br>${fmtTs(r.last_trade_time)}</div>
+          <div><span style="color:var(--muted)">Release</span><br>${fmtTs(r.release_time)}</div>
+          <div><span style="color:var(--muted)">Payout time</span><br>${fmtTs(r.payout_time)}</div>
+          <div><span style="color:var(--muted)">Tick size</span><br>${r.price_increment || '—'}</div>
+        </div>
+        ${(r.market_rules_link || r.data_and_resolution_link) ? `
+          <div style="margin-top:10px;display:flex;gap:14px;font-size:12px">
+            ${link(r.market_rules_link, '📄 Operative T&Cs')}
+            ${link(r.data_and_resolution_link, '🔗 Resolution data source')}
+          </div>` : ''}
+      </td></tr>`;
+    } else if (m._rulesLoading){
+      rulesRow = `<tr class="rules-row"><td colspan="10" style="background:#FBF9F4;padding:10px 18px 10px 42px;font-size:12px;color:var(--muted)">Loading resolution criteria…</td></tr>`;
+    }
+    // Lazy-load rules if the bulk pass hasn't reached this event yet.
+    if (!r && !m._rulesLoading){
+      m._rulesLoading = true;
+      API('/api/forecast/bulk-rules?conids=' + m.conid)
+        .then(resp => { m._rules = resp?.rules?.[m.conid] || null; m._rulesLoading = false; renderMarkets(); })
+        .catch(() => { m._rulesLoading = false; });
+    }
+
+    if (!legs.length) return eventRow + rulesRow;
 
     // Sub-rows: one per strike leg, sorted by strike label.
     const sortedLegs = legs.slice().sort((a,b) => (a.strikeLabel||'').localeCompare(b.strikeLabel||'', undefined, {numeric:true}));
@@ -1331,7 +1397,7 @@ function renderMarkets(){
         <td style="font-size:10.5px;color:var(--muted)">trade →</td>
       </tr>`;
     }).join('');
-    return eventRow + legRows;
+    return eventRow + rulesRow + legRows;
   }).join('');
 
   grid.innerHTML = `
