@@ -389,9 +389,20 @@
         <input type="number" id="filterMaxSpread" placeholder="Max spread (c)" style="width:140px">
         <input type="number" id="filterMinPrice" placeholder="Min YES price" step="0.01" style="width:140px">
         <input type="number" id="filterMaxPrice" placeholder="Max YES price" step="0.01" style="width:140px">
-        <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-2);cursor:pointer"><input type="checkbox" id="filterActiveOnly" checked> Active only</label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-2);cursor:pointer"><input type="checkbox" id="filterActiveOnly"> Active only (with bid/ask)</label>
         <button class="btn btn-primary" onclick="renderMarkets()">Apply filters</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted)" id="marketCount"></span>
+      </div>
+
+      <div id="noQuotesBanner" class="card" style="display:none;margin-bottom:14px;border-color:#F0CF8E;background:#FCF4E2">
+        <h3 class="serif" style="margin:0 0 6px;font-size:20px;color:#6E4D11">Market metadata loaded, but no live quotes yet.</h3>
+        <p style="margin:0 0 8px;font-size:13px;color:#6E4D11">
+          IBKR's <span class="mono">/forecast/category/tree</span> returned all 1,000+ ForecastEx contracts (titles, conids, exchanges).
+          But <span class="mono">/iserver/marketdata/snapshot</span> is returning fresh timestamps with no <span class="mono">bid/ask/last</span> fields — meaning the server acknowledges your subscription request but isn't pushing quote data.
+        </p>
+        <p style="margin:0;font-size:12.5px;color:#8A6814">
+          Most likely cause: <b>ForecastEx market data subscription isn't enabled on this paper account</b> (separate from API access). Reply to John C. on the existing thread asking him to enable ForecastEx market data subscription on <b>DUP169897</b>. The trading endpoints (orders, positions, /forecast metadata) all work — only live quotes are gated.
+        </p>
       </div>
 
       <div id="marketGrid" class="market-grid"></div>
@@ -904,10 +915,24 @@ async function loadCategories(){
     const tree = await API('/api/forecast/categories');
     // Real IBKR shape: { categories: { "g137940": {name, parent_id, markets: [{name, symbol, exchange, conid, product_conid}]} , ... } }
     const cats = tree?.categories || {};
+
+    // Build a parent → name lookup so we can show full breadcrumb paths (e.g. "Elections › US › Illinois").
+    const nameById = {};
+    Object.entries(cats).forEach(([id, c]) => { nameById[id] = c.name || id; });
+    const pathOf = id => {
+      const parts = [];
+      let cur = id, hops = 0;
+      while (cur && hops++ < 10){
+        if (nameById[cur]) parts.unshift(nameById[cur]);
+        cur = cats[cur]?.parent_id;
+      }
+      return parts.join(' › ');
+    };
+
     CATS = [];
     MARKETS = [];
     for (const [id, c] of Object.entries(cats)){
-      CATS.push({id, name: c.name || id, parent: c.parent_id});
+      CATS.push({id, name: c.name || id, parent: c.parent_id, path: pathOf(id)});
       for (const m of (c.markets || [])){
         MARKETS.push({
           conid: m.conid,
@@ -917,13 +942,22 @@ async function loadCategories(){
           exchange: m.exchange,
           categoryId: id,
           _cat: c.name || id,
+          _catPath: pathOf(id),
         });
       }
     }
-    // populate category filter
+
+    // Populate category filter, deduplicated by full path so "Illinois × 5" collapses to one entry per real path.
+    const seenPath = new Set();
+    const distinctCats = [];
+    CATS.sort((a,b) => a.path.localeCompare(b.path)).forEach(c => {
+      if (seenPath.has(c.path)) return;
+      seenPath.add(c.path);
+      distinctCats.push(c);
+    });
     const sel = document.getElementById('filterCat');
     sel.innerHTML = '<option value="">All categories</option>' +
-      CATS.sort((a,b)=>a.name.localeCompare(b.name)).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      distinctCats.map(c => `<option value="${c.id}">${c.path}</option>`).join('');
 
     setText('marketCount', `${MARKETS.length} contracts in ${CATS.length} categories`);
 
@@ -1019,22 +1053,33 @@ function renderMarkets(){
   });
 
   const activeCount = MARKETS.filter(isActive).length;
-  setText('marketCount', `${items.length} shown · ${activeCount}/${MARKETS.length} actively quoted`);
+  setText('marketCount', `${items.length} shown · ${activeCount}/${MARKETS.length} with quotes`);
+
+  // If we have markets but no quotes anywhere, surface the likely cause once.
+  const banner = document.getElementById('noQuotesBanner');
+  if (banner){
+    const show = MARKETS.length > 50 && activeCount === 0;
+    banner.style.display = show ? 'block' : 'none';
+  }
   const grid = document.getElementById('marketGrid');
   if (!items.length) {
     grid.innerHTML = `<div class="card empty" style="grid-column:1/-1"><p>No contracts match your filters.</p></div>`;
     return;
   }
-  grid.innerHTML = items.slice(0, 60).map((m, i) => {
+  // Paginate to keep the DOM responsive — 1k+ cards live-rendered tanks scrolling.
+  const PAGE = 120;
+  if (PAGE_OFFSET > items.length) PAGE_OFFSET = 0;
+  const slice = items.slice(0, PAGE_OFFSET + PAGE);
+  grid.innerHTML = slice.map(m => {
     const yes = m._last ?? m._ask ?? m._bid;
     const sp = (m._bid != null && m._ask != null) ? ((m._ask - m._bid)*100).toFixed(1) + 'c' : '—';
     return `
     <div class="market" onclick="openMarket(${MARKETS.indexOf(m)})">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div class="cat">${m._cat || m.category || ''}</div>
-        <span class="chip">conid ${m.conid || m.contractId || ''}</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div class="cat" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${m._catPath || m._cat || ''}</div>
+        <span class="chip">conid ${m.conid || ''}</span>
       </div>
-      <div class="title">${m.title || m.description || m.name || '(untitled)'}</div>
+      <div class="title">${m.title || '(untitled)'}</div>
       <div class="px-row">
         <span class="yes">YES</span>
         <span class="price mono">${yes != null && !isNaN(yes) ? Number(yes).toFixed(3) : '—'}</span>
@@ -1042,11 +1087,22 @@ function renderMarkets(){
       </div>
       <div class="meta">
         <span>spread ${sp}</span>
-        <span>${m.expiry || m.expiration || m.expiryTime || ''}</span>
+        <span>${m.symbol || m.exchange || ''}</span>
       </div>
     </div>`;
   }).join('');
+
+  // Pagination controls
+  if (items.length > slice.length) {
+    grid.insertAdjacentHTML('beforeend',
+      `<div class="card empty" style="grid-column:1/-1;padding:14px">
+        <p style="margin:0">Showing ${slice.length} of ${items.length}.
+        <button class="btn btn-dark" onclick="PAGE_OFFSET += 120; renderMarkets();" style="margin-left:8px">Load more</button>
+        <button class="btn" onclick="PAGE_OFFSET = items.length; renderMarkets();" style="margin-left:4px">Show all</button></p>
+      </div>`);
+  }
 }
+let PAGE_OFFSET = 0;
 
 async function openMarket(idx){
   const m = MARKETS[idx]; if (!m) return;
